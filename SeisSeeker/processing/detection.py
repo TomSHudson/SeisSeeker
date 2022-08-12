@@ -15,29 +15,34 @@ import matplotlib
 import os, sys
 import obspy
 from scipy.signal import find_peaks
-from numba import jit, prange, set_num_threads
+from numba import jit, objmode, prange, set_num_threads
 import gc 
+# import multiprocessing as mp
+import time 
+
 
 
 #----------------------------------------------- Define main functions -----------------------------------------------
 class CustomError(Exception):
     pass
 
-#@jit(nopython=True)
+
+def flatten_list(l):
+    return [item for sublist in l for item in sublist]
+
+
+@jit(nopython=True, parallel=True)#, nogil=True)
 def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
     """Function to perform array processing fast due to being designed to 
     be wrapped using Numba.
     Returns:
     Pfreq_all
     """
-    # Create data stores:
-    Pfreq_all = []
-
     # Define grid of slownesses:
     # number of pixes in x and y
     # (Determines number of phase shifts to perform)
-    nux = 101
-    nuy = 101
+    nux = 51 #101
+    nuy = 51 #101
     ux = np.linspace(-max_sl,max_sl,nux)
     uy = np.linspace(-max_sl,max_sl,nuy)
     dux=ux[1]-ux[0]
@@ -45,32 +50,39 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
 
     # To speed things up, we precompute a library of time shifts,
     #  so we don't have to do it for each loop of frequency:
-    tlib=np.zeros([n_stations,nux,nuy],dtype=float)
+    tlib = np.zeros((n_stations,nux,nuy), dtype=np.complex128)#, dtype=np.float64)
     for ix in range(0,nux):
             for iy in range(0,nuy):
                 tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy]
     # In this case, we assume station locations xx and yy are already relative to some convenient midpoint
     # Rather than shift one station to a single other station, we'll shift *all* stations back to that midpoint
 
+    # Create data stores:
+    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),nux,nuy), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
+
     # Then loop over windows:
-    for win_idx in range(data.shape[0]):
-        if(win_idx % 10 == 0):
-            print("Processing for window", win_idx+1, "/", data.shape[0])
+    for win_idx in prange(data.shape[0]):
+        # if(win_idx % 10 == 0):
+        #     print("Processing for window", win_idx+1, "/", data.shape[0])
         
         # Calculate spectra:
         # Construct data structure:
-        nfft = (2.0**np.ceil(np.log2(n_t_samp))).astype(int)
-        Pxx_all = np.zeros((np.int((nfft/2)+1), n_stations), dtype=complex) # Power spectra
+        nfft = (2.0**np.ceil(np.log2(n_t_samp)))
+        nfft = np.array(nfft, dtype=np.int64)
+        Pxx_all = np.zeros((np.int((nfft/2)+1), n_stations), dtype=np.complex128) # Power spectra
         dt = 1. / fs 
         df = 1.0/(2.0*nfft*dt)
         xf = np.linspace(0.0, 1.0/(2.0*dt), np.int((nfft/2)+1))
         # Calculate power spectra for all stations:
         for sta_idx in range(n_stations):
             # Calculate spectra for current station:
-            Pxx_all[:,sta_idx] = np.fft.rfft(data[win_idx,sta_idx,:],n=nfft) # (Use real fft, as input data is real)
+            ###Pxx_all[:,sta_idx] = np.fft.rfft(data[win_idx,sta_idx,:], n=nfft) # (Use real fft, as input data is real) # DOESN'T WORK WITH NUMBA!
+            with objmode(Pxx_curr='complex128[:]'):
+                Pxx_curr = np.fft.rfft(data[win_idx,sta_idx,:], n=nfft)
+            Pxx_all[:,sta_idx] = Pxx_curr
 
         # Loop over all freqs, performing phase shifts:
-        Pfreq=np.zeros([len(target_freqs),nux,nuy],dtype=complex)
+        Pfreq=np.zeros((len(target_freqs),nux,nuy),dtype=np.complex128)
         counter_grid = 0
         for ii in range(len(target_freqs)):
             # Find closest current freq.:
@@ -78,7 +90,7 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             curr_f_idx = (np.abs(xf - target_f)).argmin()
 
             # Construct a matrix of each station-station correlation *before* any phase shifts
-            Rxx=np.zeros([n_stations,n_stations],dtype=complex)
+            Rxx=np.zeros((n_stations,n_stations),dtype=np.complex128)
             for i1 in range(0,n_stations):
                 for i2 in range(0,n_stations):
                     # Remove autocorrelations:
@@ -91,8 +103,7 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             # And loop over phase shifts, calculating cross-correlation power:
             for ix in range(0,nux):
                 for iy in range(0,nuy):
-                    timeshifts = tlib[:,ix,iy]
-                    # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
+                    timeshifts = tlib[:,ix,iy] # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
                     a = np.exp(-1j*2*np.pi*target_f*timeshifts)
                     aconj = np.conj(a)
                     # "a" is a "steering vector." It contains info on all the phase delays needed to 
@@ -100,13 +111,22 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
                     # Since each element of Rxx contains cross-spectra of two stations, we need two timeshifts
                     #  to push both to the centerpoint. This can also be seen as projecting Rxx onto a new basis.
                     Pfreq[ii,ix,iy]=np.dot(np.dot(aconj,Rxx),a)     
+
         # And remove any data where stations don't exist:
-        Pfreq = np.nan_to_num(Pfreq, copy=False, nan=0.0)
+        ###np.nan_to_num(Pfreq, copy=False, nan=0.0) # NOT SUPPORTED BY NUMBA SO DO OUTSIDE NUMBA
                     
         # And append output to datastore:
-        Pfreq_all.append(Pfreq)
+        Pfreq_all[win_idx,:,:,:] = Pfreq
 
     return Pfreq_all 
+
+
+def _submit_parallel_fast_freq_domain_array_proc(procnum, return_dict_Pfreq_all, data_curr_run, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
+    """Function to submit parallel runs of _fast_freq_domain_array_proc() function."""
+    # Run function:
+    Pfreq_all_curr_run = _fast_freq_domain_array_proc(data_curr_run, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr)
+    # And return data
+    return_dict_Pfreq_all[procnum] = Pfreq_all_curr_run
 
 
 class setup_detection:
@@ -154,6 +174,13 @@ class setup_detection:
     win_len_s : float
         The window length for each frequency domain step. Units are seconds.
         Default value is 0.1 s.
+    
+    remove_autocorr : bool
+        If True, then will remove autocorrelations. Default is True.
+
+    norm_pre_stacking : bool
+        If True, normallises data before stacking. Similar to performing spectral 
+        whitening. Default is False
 
     Methods
     -------
@@ -204,6 +231,8 @@ class setup_detection:
         self.max_sl = 1.0
         self.win_len_s = 0.1
         self.remove_autocorr = True
+        self.norm_pre_stacking = False
+        # self.nproc = 1
 
 
     def _setup_array_receiver_coords(self):
@@ -315,6 +344,54 @@ class setup_detection:
         return data 
 
     
+    def _stack_results(self, Pfreq_all):
+        """Function to perform stacking of the results."""
+        Psum_all = np.zeros((Pfreq_all.shape[0], Pfreq_all.shape[2], Pfreq_all.shape[3]), dtype=complex)
+        # Loop over time windows:
+        for i in range(Pfreq_all.shape[0]):
+            if self.norm_pre_stacking:
+                Pfreq_norm_curr = Pfreq_all[i,:,:,:] / np.sum(np.abs(Pfreq_all[i,:,:,:]), axis=0)
+                Psum_all[i,:,:] = np.sum(Pfreq_norm_curr,axis=0)
+            else:
+                Psum_all[i,:,:] = np.sum(Pfreq_all[i,:,:,:],axis=0)
+        return Psum_all
+
+    def _find_time_series(self, Psum_all):
+        """Function to calculate beamforming time-series outputs, given 
+        a raw beamforming result.
+        Psum_all - Sum of Pxx for each time window, and for all slownesses.
+                    Shape is n_win x slowness WE x slowness SN
+        Returns time-series of coherency (power), slowness and back-azimuth.
+        """
+        # Calcualte ux, uy:
+        ux = np.linspace(-self.max_sl,self.max_sl,Psum_all.shape[1])
+        uy = np.linspace(-self.max_sl,self.max_sl,Psum_all.shape[2])
+        dux=ux[1]-ux[0]
+        duy=uy[1]-uy[0]
+        # Create time-series:
+        n_win_curr = Psum_all.shape[0]
+        t_series = np.arange(self.win_len_s/2,(n_win_curr*self.win_len_s) + (self.win_len_s/2), self.win_len_s)
+        # And find power, slowness and back-azimuth:
+        powers = np.zeros(n_win_curr)
+        slownesses = np.zeros(n_win_curr)
+        back_azis = np.zeros(n_win_curr)
+        # Loop over windows in time:
+        for i in range(n_win_curr):
+            # Calculate max. power:
+            powers[i] = np.max(np.abs(Psum_all[i,:,:]))
+            # Calculate slowness:
+            x_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[0][0]
+            y_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[1][0]
+            x_sl = ux[x_idx] - dux/2
+            y_sl = uy[y_idx] - duy/2
+            slownesses[i] = np.sqrt(x_sl**2 + y_sl**2)
+            # And calculate back-azimuth:
+            back_azis[i] = np.rad2deg( np.arctan2( x_sl, y_sl ) )
+            if back_azis[i] < 0:
+                back_azis[i] += 360
+            
+        return t_series, powers, slownesses, back_azis
+    
     def run_array_proc(self):
         """Function to run core array processing.
         Performed in frequency domain. Involves applying phase (equiv. to time) shift 
@@ -324,6 +401,7 @@ class setup_detection:
         self._setup_array_receiver_coords()
 
         # Loop over years:
+        init_numba_compile_switch = True
         for year in range(self.starttime.year, self.endtime.year+1):
             # Loop over days:
             for julday in range(1,367):
@@ -357,16 +435,71 @@ class setup_detection:
                     # Station locations:
                     xx = self.stations_df['x_array_coords_km'].values
                     yy = self.stations_df['y_array_coords_km'].values
-                    # And run
-                    Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)
+                    # Run initial numba jit compile:
+                    if init_numba_compile_switch:
+                        print("Performing initial compile")
+                        init_data = data[0,:,:].copy()
+                        init_data = init_data.reshape((1, data[0,:,:].shape[0], data[0,:,:].shape[1]))
+                        Pfreq_all = _fast_freq_domain_array_proc(init_data, self.max_sl, self.fs, target_freqs, xx, yy, 
+                                                                    self.n_stations, self.n_t_samp, self.remove_autocorr)
+                    # And run:
+                    # if self.nproc == 1:
+                    tic = time.time()
+                    print("Performing run for",data.shape[0],"windows")
+                    Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
+                                                                    self.n_stations, self.n_t_samp, self.remove_autocorr)
+                    toc = time.time()
+                    print(toc-tic)
+                    # else:
+                    #     # pool = mp.Pool(mp.cpu_count())
+                    #     # print("Using", mp.cpu_count(), "CPUs.")
+                    #     # Pfreq_all = [pool.apply(_fast_freq_domain_array_proc, args=(win.reshape((1, win.shape[0], win.shape[1])), self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)) for win in data] # Loop over windows of data
+                    #     # pool.close()
 
+                    #     print("Using", self.nproc, "CPUs.")
+                    #     # Start jobs:
+                    #     manager = mp.Manager()
+                    #     return_dict_Pfreq_all = manager.dict() # for returning data
+                    #     jobs = []
+                    #     n_samp_per_proc = int(data.shape[0] / self.nproc)
+                    #     for procnum in np.arange(self.nproc):
+                    #         win_start_idx = int(procnum * n_samp_per_proc)
+                    #         if procnum + 1 < self.nproc:
+                    #             win_end_idx = int((procnum + 1) * n_samp_per_proc)
+                    #         else:
+                    #             win_end_idx = -1
+                    #         p = mp.Process(target=_submit_parallel_fast_freq_domain_array_proc, args=(procnum, return_dict_Pfreq_all, 
+                    #                         data[win_start_idx:win_end_idx, :, :], self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, 
+                    #                         self.remove_autocorr))
+                    #         jobs.append(p)
+                    #         p.start() # Start process
+                    #     # And join processes together:
+                    #     for p in jobs:
+                    #         p.join()
+                    #     # And get data:
+                    #     for procnum in np.arange(self.nproc):
+                    #         # Append, as in chronological order already:
+                    #         Pfreq_all = return_dict_Pfreq_all[procnum]
+                    #     Pfreq_all = flatten_list(Pfreq_all)
+                    #     del return_dict_Pfreq_all
+                    #     gc.collect()
+
+                    # And remove any data where stations don't exist:
+                    # for i in np.arange(len(Pfreq_all)):
+                        # Pfreq_all[i] = np.nan_to_num(Pfreq_all[i], copy=False, nan=0.0)
+                    Pfreq_all = np.nan_to_num(Pfreq_all, copy=False, nan=0.0)
 
                     # Sum/stack/normallise data:
+                    Psum_all = self._stack_results(Pfreq_all)
+                    del Pfreq_all
+                    gc.collect()
+
+                    # Calculate time-series outputs (for detection) from data:
+                    t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
 
 
-                    # Calculate detection outputs from data:
 
-        return Pfreq_all
+        return Psum_all, t_series, powers, slownesses, back_azis
 
 
 
