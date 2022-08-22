@@ -12,6 +12,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib
+import matplotlib.pyplot as plt 
 import os, sys
 import obspy
 from scipy.signal import find_peaks
@@ -19,6 +20,7 @@ from numba import jit, objmode, prange, set_num_threads
 import gc 
 # import multiprocessing as mp
 import time 
+import glob 
 
 
 
@@ -166,7 +168,10 @@ class setup_detection:
 
     num_freqs : int
         Number of discrete frequencies to use between <freqmin> and <freqmax> 
-                in analysis. Default is 100.
+                in analysis. Default is 100. Note: Reducing this value increases 
+                efficiency linearly, but costs in terms of absolute power. However, 
+                SNR of power time-series remains approximately constant (to a point).
+                Can affect slowness and bazi results, especially within noise, though.
 
     max_sl : float
         Maximum slowness to analyse for, in s / km. Default is 1.0 s / km.
@@ -181,6 +186,31 @@ class setup_detection:
     norm_pre_stacking : bool
         If True, normallises data before stacking. Similar to performing spectral 
         whitening. Default is False
+
+    mad_window_length_s : float
+        Length of time-window, in seconds, to calculate background Median Absolute 
+        Deviation (MAD) for triggering events. Default is 3600 s.
+
+    mad_multiplier : int
+        The trigger level above the background MAD level to trigger a phase detection.
+        Default = 8.
+
+    min_event_sep_s : float
+        Minimum separation between event detections, in seconds. Default = 1 s.
+
+    bazi_tol : float 
+        The back-azimuth tolerance to associate incoming phases with the same event.
+        Various phases have to fulfil the criteria of having the same back-azimuth 
+        for all phase arrivals, +/- <bazi_tol>. Units are degrees. Defaul is 20 degrees.
+
+    max_phase_sep_s : float
+        The maximum time separation between individual phases. Units are seconds. Default 
+        is 2.5 s.
+
+    filt_phase_assoc_by_max_power : bool
+        If True, filters event phase association within a given window by max. power. I.e. 
+        if True, will only pick highest amplitude phase arrivals on both vertical and 
+        horizontal components, within the time window <max_phase_sep_s>.
 
     Methods
     -------
@@ -221,10 +251,14 @@ class setup_detection:
         self.endtime = endtime
         self.channels_to_use = channels_to_use
 
+        # Setup outdir:
+        os.makedirs(outdir, exist_ok=True)
+
         # Setup station information:
         self.stations_df = pd.read_csv(self.stations_fname)
 
         # And define attributes:
+        # For array processing:
         self.freqmin = None
         self.freqmax = None
         self.num_freqs = 100
@@ -233,6 +267,14 @@ class setup_detection:
         self.remove_autocorr = True
         self.norm_pre_stacking = False
         # self.nproc = 1
+        self.out_fnames_array_proc = []
+        # For detection:
+        self.mad_window_length_s = 3600
+        self.mad_multiplier = 8
+        self.min_event_sep_s = 1.
+        self.bazi_tol = 20.
+        self.max_phase_sep_s = 2.5
+        self.filt_phase_assoc_by_max_power = True
 
 
     def _setup_array_receiver_coords(self):
@@ -371,6 +413,8 @@ class setup_detection:
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
         t_series = np.arange(self.win_len_s/2,(n_win_curr*self.win_len_s) + (self.win_len_s/2), self.win_len_s)
+        if len(t_series) > n_win_curr:
+            t_series = t_series[0:n_win_curr]
         # And find power, slowness and back-azimuth:
         powers = np.zeros(n_win_curr)
         slownesses = np.zeros(n_win_curr)
@@ -414,14 +458,18 @@ class setup_detection:
                         continue # Ignore day, as out of range
                 
                 # And process data:
-                print("="*60)
-                print("Processing data for year "+str(year)+", day "+str(julday).zfill(3))
 
                 # Loop over channels:
                 for self.channel_curr in self.channels_to_use:
+                    print("="*60)
+                    print("Processing data for year "+str(year)+", day "+str(julday).zfill(3)+", channel "+self.channel_curr)
+
+                    # Create datastore:
+                    out_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
 
                     # Load data:
                     st = self._load_day_of_data(year, julday)
+                    starttime_this_day = st[0].stats.starttime
 
                     # Convert data to np:
                     data = self._convert_st_to_np_data(st)
@@ -431,7 +479,8 @@ class setup_detection:
                     # Run heavy array processing algorithm:
                     # Specify various variables needed:
                     # Make a linear spacing of frequencies. One might use periods, logspacing, etc.:
-                    target_freqs = np.linspace(self.freqmin,self.freqmax,self.num_freqs) #np.logspace(f_min,f_max,num_freqs) #np.linspace(f_min,f_max,num_freqs)
+                    # (Note: linspace much less noisy than logspace)
+                    target_freqs = np.linspace(self.freqmin,self.freqmax,self.num_freqs) #np.logspace(self.freqmin,self.freqmax,self.num_freqs) 
                     # Station locations:
                     xx = self.stations_df['x_array_coords_km'].values
                     yy = self.stations_df['y_array_coords_km'].values
@@ -442,6 +491,7 @@ class setup_detection:
                         init_data = init_data.reshape((1, data[0,:,:].shape[0], data[0,:,:].shape[1]))
                         Pfreq_all = _fast_freq_domain_array_proc(init_data, self.max_sl, self.fs, target_freqs, xx, yy, 
                                                                     self.n_stations, self.n_t_samp, self.remove_autocorr)
+                        init_numba_compile_switch = False
                     # And run:
                     # if self.nproc == 1:
                     tic = time.time()
@@ -496,25 +546,188 @@ class setup_detection:
 
                     # Calculate time-series outputs (for detection) from data:
                     t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
+                    
+                    # And append to data out:
+                    t_series_out = []
+                    for t_serie in t_series:
+                        t_series_out.append( str(starttime_this_day + t_serie) )
+                    tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
+                    out_df = out_df.append(tmp_df)
+
+                    # And save data out:
+                    out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
+                                                str(starttime_this_day.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
+                    out_df.to_csv(out_fname, index=False)
+                    self.out_fnames_array_proc.append(out_fname)
+
+                    # And clear memory:
+                    del Psum_all, t_series, powers, slownesses, back_azis, out_df
+                    gc.collect()
+
+        return None
+
+    def _calculate_mad(self, x, scale=1.4826):
+        """
+        Calculates the Median Absolute Deviation (MAD) of the input array x.
+        Outputs an array of scaled mean absolute deviation values for the input array, x,
+        scaled to provide an estimation of the standard deviation of the distribution.
+        """
+        # Calculate median and mad values:
+        mad = np.median(np.abs(x - np.median(x)))
+        return scale * mad
+    
+    def _phase_associator(self, t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor):
+        """
+        Function to perform phase association.
+        """
+        # Setup events datastore:
+        events_df = pd.DataFrame()
+        # Find back-azimuths associated with phase picks:
+        bazis_Z = t_series_df_Z['back_azi'].values[peaks_Z]
+        bazis_hor = t_series_df_hor['back_azi'].values[peaks_hor]
+        # Loop over phases, seeing if they meet phase association criteria:
+        for i in range(len(peaks_Z)):
+            curr_peak_Z_idx = peaks_Z[i]
+            for j in range(len(peaks_hor)):
+                curr_peak_hor_idx = peaks_hor[j]
+                # i. Check if bazis for Z and horizontals current pick match:
+                if np.abs( bazis_Z[i] - bazis_hor[j] ) < self.bazi_tol:
+                    match = True
+                # And deal with if they are close to North:
+                elif np.abs( bazis_Z[i] - bazis_hor[j] ) > (360. - self.bazi_tol):
+                    match = True
+                else:
+                    match = False
+                # ii. Check if phase arrivals are within specified limits:
+                if match == True:
+                    if obspy.UTCDateTime(t_series_df_hor['t'][curr_peak_hor_idx]) - obspy.UTCDateTime(t_series_df_Z['t'][curr_peak_Z_idx]):
+                        match = True
+                    else:
+                        match = False 
+
+                # And associate phases and create event data if a match is found:
+                if match:
+                    # Write event:
+                    curr_event_df = pd.DataFrame({'t1': [t_series_df_Z['t'][curr_peak_Z_idx]], 't2': [t_series_df_hor['t'][curr_peak_hor_idx]], 
+                                                'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
+                                                'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
+                                                'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
+                    events_df = events_df.append(curr_event_df)
+
+        # And filter events to only output events with max. power within the max. phase window, 
+        # if speficifed by user:
+        if self.filt_phase_assoc_by_max_power:
+            # Calculate max power of P and S for each potential event:
+            # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
+            # Define datastores:
+            filt_events_df = pd.DataFrame()
+            # And loop over events, selecting only max. power events:
+            tmp_count = 0
+            for index, row in events_df.iterrows():
+                tmp_count+=1
+                if tmp_count == 1:
+                    tmp_df = pd.DataFrame()
+                    tmp_df = tmp_df.append(row)
+                else:
+                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < self.max_phase_sep_s:
+                        # Append event to compare:
+                        tmp_df = tmp_df.append(row)
+                    else:
+                        # Find best event from previous events:
+                        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+                        max_power_idx = np.argmax(combined_pows_tmp)
+                        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+
+                        # And start acrewing new events:
+                        tmp_df = pd.DataFrame()
+                        tmp_df = tmp_df.append(row)
+            # And calculate highest power event for final window:
+            combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+            max_power_idx = np.argmax(combined_pows_tmp)
+            filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+            # And output df:
+            events_df = filt_events_df.copy()
+            del filt_events_df
+            gc.collect()
 
 
+        return events_df
+    
+    def detect_events(self, verbosity=0):
+        """Function to detect events, based on the power time-series generated 
+        by run_array_proc(). Note: Currently, only Median Absolute Deviation 
+        triggering is implemented.
+        Key attributes used are:
+        - mad_window_length_s
+        - mad_multiplier
+        - min_event_sep_s
+        """
+        print("Note: <mad_window_length_s> not yet implemented.")
+        # Loop over array proc outdir data:
+        for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
+            f_uid = fname[-20:-8]
+            # Check if in list to process:
+            if fname in self.out_fnames_array_proc:
+                # And load in data:
+                # Read in vertical data:
+                t_series_df_Z = pd.read_csv(fname)
+                # And read in horizontals:
+                try:
+                    fname_N = os.path.join(self.outdir, ''.join(( "detection_t_series_", f_uid, "_chN.csv" )))
+                    t_series_df_N = pd.read_csv(fname_N)
+                except FileNotFoundError:
+                    fname_N = os.path.join(self.outdir, ''.join(( "detection_t_series_", f_uid, "_ch1.csv" )))
+                    t_series_df_N = pd.read_csv(fname_N)
+                try:
+                    fname_E = os.path.join(self.outdir, ''.join(( "detection_t_series_", f_uid, "_chE.csv" )))
+                    t_series_df_E = pd.read_csv(fname_E)
+                except FileNotFoundError:
+                    fname_E = os.path.join(self.outdir, ''.join(( "detection_t_series_", f_uid, "_ch2.csv" )))
+                    t_series_df_E = pd.read_csv(fname_E)
+            else:
+                continue # Skip file, as not previously been processed.
 
-        return Psum_all, t_series, powers, slownesses, back_azis
+            # Combine horizontals:
+            t_series_df_hor = t_series_df_N.copy()
+            t_series_df_hor["power"] = np.sqrt(t_series_df_N["power"].values**2 + t_series_df_E["power"].values**2)
+            NE_Pxx_max = np.max(np.concatenate((t_series_df_N["power"].values, t_series_df_E["power"].values)))
+            N_weighting = t_series_df_N["power"].values / NE_Pxx_max
+            E_weighting = t_series_df_E["power"].values / NE_Pxx_max
+            t_series_df_hor["slowness"] = np.average(np.vstack((t_series_df_N['slowness'], t_series_df_E['slowness'])), 
+                                                        axis=0, weights=np.vstack((N_weighting, 
+                                                        E_weighting))) # Weighted mean (weighted by power)
+            t_series_df_hor["back_azi"] = np.average(np.vstack((t_series_df_N['back_azi'], t_series_df_E['back_azi'])), 
+                                                        axis=0, weights=np.vstack((N_weighting, 
+                                                        E_weighting))) # Weighted mean (weighted by power)
+            print("(Weighted horizontal slowness and back-azi using power)")
+            del N_weighting, E_weighting, t_series_df_N, t_series_df_E
+            gc.collect()
 
+            # Calculate pick thresholds:
+            mad_pick_threshold_Z = np.median(t_series_df_Z['power'].values) + (self.mad_multiplier * self._calculate_mad(t_series_df_Z['power']))
+            mad_pick_threshold_hor = np.median(t_series_df_hor['power'].values) + (self.mad_multiplier * self._calculate_mad(t_series_df_hor['power']))
+            
+            # Get phase picks:
+            min_pick_dist = int(self.min_event_sep_s / (obspy.UTCDateTime(t_series_df_Z['t'][1]) - obspy.UTCDateTime(t_series_df_Z['t'][0])))
+            peaks_Z, _ = find_peaks(t_series_df_Z['power'].values, height=mad_pick_threshold_Z, distance=min_pick_dist)
+            peaks_hor, _ = find_peaks(t_series_df_hor['power'].values, height=mad_pick_threshold_hor, distance=min_pick_dist)
 
+            # Phase assoicate by BAZI threshold and max. power:
+            events_df = self._phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor)
+            # Plot detected, phase-associated picks:
+            if verbosity > 1:
+                print("="*40)
+                print("Event phase associations:")            
+                print(events_df)
+                print("="*40)
+                plt.figure()
+                plt.plot(t_series_df_Z['t'], t_series_df_Z['power'])
+                plt.plot(t_series_df_hor['t'], t_series_df_hor['power'])
+                plt.scatter(events_df['t1'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='r')
+                plt.scatter(events_df['t2'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='b')
+                plt.show()
 
-
-
-
-
-
-
-
-
-
-
-
-
+            return events_df
 
 
 #----------------------------------------------- End: Define main functions -----------------------------------------------
