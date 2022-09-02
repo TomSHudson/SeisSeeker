@@ -21,6 +21,8 @@ import gc
 # import multiprocessing as mp
 import time 
 import glob 
+import pickle
+from SeisSeeker.processing import lookup_table_manager 
 
 
 
@@ -688,14 +690,15 @@ class setup_detection:
                 continue # Skip file, as not previously been processed.
 
             # Combine horizontals:
+            # (Using RMS of N and E signals for slowness and average for BAZI)
             t_series_df_hor = t_series_df_N.copy()
             t_series_df_hor["power"] = np.sqrt(t_series_df_N["power"].values**2 + t_series_df_E["power"].values**2)
             NE_Pxx_max = np.max(np.concatenate((t_series_df_N["power"].values, t_series_df_E["power"].values)))
             N_weighting = t_series_df_N["power"].values / NE_Pxx_max
             E_weighting = t_series_df_E["power"].values / NE_Pxx_max
-            t_series_df_hor["slowness"] = np.average(np.vstack((t_series_df_N['slowness'], t_series_df_E['slowness'])), 
+            t_series_df_hor["slowness"] = np.sqrt(np.average(np.vstack((t_series_df_N['slowness']**2, t_series_df_E['slowness']**2)), 
                                                         axis=0, weights=np.vstack((N_weighting, 
-                                                        E_weighting))) # Weighted mean (weighted by power)
+                                                        E_weighting)))) # Weighted mean (weighted by power)
             t_series_df_hor["back_azi"] = np.average(np.vstack((t_series_df_N['back_azi'], t_series_df_E['back_azi'])), 
                                                         axis=0, weights=np.vstack((N_weighting, 
                                                         E_weighting))) # Weighted mean (weighted by power)
@@ -720,14 +723,108 @@ class setup_detection:
                 print("Event phase associations:")            
                 print(events_df)
                 print("="*40)
-                plt.figure()
-                plt.plot(t_series_df_Z['t'], t_series_df_Z['power'])
-                plt.plot(t_series_df_hor['t'], t_series_df_hor['power'])
-                plt.scatter(events_df['t1'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='r')
-                plt.scatter(events_df['t2'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='b')
+                plt.figure(figsize=(8,6))
+                plt.plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
+                plt.plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
+                plt.scatter(events_df['t1'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
+                plt.scatter(events_df['t2'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
+                plt.legend()
+                plt.xlabel("Time")
+                plt.ylabel("Power (arb. units)")
+                # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
+                plt.gca().xaxis.set_major_locator(plt.MaxNLocator(3))
                 plt.show()
 
-            return events_df
+        return events_df
+    
+    def create_location_LUTs(self, oneD_vel_model_z_df, extent_x_m=4000, dxz=[100,100], array_centre_xz=[0, 0]):
+        """Function to create lookup tables used for location. Lookup tables created are:
+        - P travel-times
+        - S travel-times.
+        - P inclination angles.
+        - S inclination angles.
+        Note: Array centre is typically defined as the 
+
+        Parameters
+        ----------
+        oneD_vel_model_z_df : pandas DataFrame
+            Pandas DataFrame containing 1D velocity model, with the following columns:
+            depth | vp | vs
+            All units are SI units (i.e. metres, metres/second). Depths are positive down.
+
+        extent_x_m : float
+            Extent of lookup table horizontal. Units are metres. Default is 4000 m.
+
+        array_centre_xz : list
+            Path to csv file containing station/receiver locations. Headers need 
+            to be of format: Latitude  Longitude  Elevation  Name. No need to change unless 
+            the user has a particularly good reason. Takes a list of length two, containing 
+            the array centre in x and z, in metres from the LUT grid origin.
+
+        dxz : list
+            List of two floats, defining the spatial spacing of the nodes in the LUTs in x 
+            and z. Units are metres. Default is [100, 100].
+
+        Returns
+        -------
+        Returns a pickled LUT dict to <outdir>/LUT.
+        """
+        # Assign LUT creation parameters to class attributes:
+        self.oneD_vel_model_z_df = oneD_vel_model_z_df
+        self.extent_x_m = extent_x_m
+        self.dxz = dxz
+        self.array_centre_xz = array_centre_xz
+
+        # Create 2D LUTs:
+        # (for P and S travel-times, and inclination angle)
+        # And get travel times:
+        trav_times_grid_P, trav_times_grid_S, theta_grid_P, theta_grid_S, vel_model_x_labels, vel_model_z_labels = lookup_table_manager.create_2D_LUT(oneD_vel_model_z_df, 
+                                                                                                                            array_centre_xz, extent_x_m=extent_x_m, dxz=dxz)
+        # And save outputs:
+        LUT_outdir = os.path.join(self.outdir, "LUT")
+        os.makedirs(LUT_outdir, exist_ok=True)
+        LUTs_dict = {}
+        LUTs_dict['trav_times_grid_P'] = trav_times_grid_P
+        LUTs_dict['trav_times_grid_S'] = trav_times_grid_S
+        LUTs_dict['theta_grid_P'] = theta_grid_P
+        LUTs_dict['theta_grid_S'] = theta_grid_S
+        LUTs_dict['vel_model_x_labels'] = vel_model_x_labels
+        LUTs_dict['vel_model_z_labels'] = vel_model_z_labels
+        LUTs_dict['oneD_vel_model_z_df'] = self.oneD_vel_model_z_df
+        LUTs_dict['extent_x_m'] = self.extent_x_m
+        LUTs_dict['dxz'] = self.dxz
+        LUTs_dict['array_centre_xz'] = self.array_centre_xz
+        self.LUTs_fname = os.path.join(LUT_outdir, 'LUTs.pkl')
+        pickle.dump( LUTs_dict, open( self.LUTs_fname, "wb" ) )
+        print("Saved LUT to:", self.LUTs_fname)
+        return LUTs_dict
+
+    def load_location_LUTs(self, LUTs_fname=None):
+        """Function to load lookup tables used for location.
+        Parameters
+        ----------
+        LUTs_fname : str
+            Path to LUT file to load. Optional. Default is to use the attribute 
+            <LUTs_fname>. 
+        """
+        # Assign attribute, if not already specified correctly:
+        if LUTs_fname:
+            self.LUTs_fname = LUTs_fname
+        # And load LUTs:
+        LUTs_dict = pickle.load( open( self.LUTs_fname, "rb" ) )
+        # And assign relevent attributes:
+        self.oneD_vel_model_z_df = LUTs_dict['oneD_vel_model_z_df']
+        self.extent_x_m = LUTs_dict['extent_x_m']
+        self.dxz = LUTs_dict['dxz']
+        self.array_centre_xz = LUTs_dict['array_centre_xz']
+        return LUTs_dict
+
+
+
+
+
+
+
 
 
 #----------------------------------------------- End: Define main functions -----------------------------------------------
