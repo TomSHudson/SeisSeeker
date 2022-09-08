@@ -171,11 +171,18 @@ def create_2D_LUT(oneD_vel_model_z_df, array_centre_xz, extent_x_m=3000., dxz=[1
             dxyz = np.array([dx, dx, dz], dtype=float) / 1000
             ray = ray_tracer(vel_model_arr_P_3D / 1000, dxyz, src_loc=node_coords, rx_loc=receiver_coords)
             # Calculate incidence angle at array:
-            ray_vec_at_receiver = - np.array([ ray[-1,1] - ray[-2,1], ray[-1,2] - ray[-2,2] ]) # Note minus sign, as defining as vector out from array
-            vert_vec = np.array([ 0,  1])
-            theta_curr = np.arccos( ( ray_vec_at_receiver.dot(vert_vec) ) / ( vec_norm(ray_vec_at_receiver) * vec_norm(vert_vec) ) ) # cos(theta) = a.b / |a| |b|
-            theta_curr = np.rad2deg(theta_curr)
-            theta_grid_P[i,j] = theta_curr
+            try:
+                ray_vec_at_receiver = - np.array([ ray[-1,1] - ray[-2,1], ray[-1,2] - ray[-2,2] ]) # Note minus sign, as defining as vector out from array
+                vert_vec = np.array([ 0,  1])
+                theta_curr = np.arccos( ( ray_vec_at_receiver.dot(vert_vec) ) / ( vec_norm(ray_vec_at_receiver) * vec_norm(vert_vec) ) ) # cos(theta) = a.b / |a| |b|
+                theta_curr = np.rad2deg(theta_curr)
+                theta_grid_P[i,j] = theta_curr
+            except IndexError:
+                # Or assign previous value, if failed to trace rays for some reason:
+                if j>0:
+                    theta_grid_P[i,j] = theta_grid_P[i,j-1]
+                else:
+                    theta_grid_P[i,j] = theta_grid_P[i-1,j]
             # And clear up:
             del ray 
             gc.collect()
@@ -186,11 +193,18 @@ def create_2D_LUT(oneD_vel_model_z_df, array_centre_xz, extent_x_m=3000., dxz=[1
             # Perform ray tracing:
             ray = ray_tracer(vel_model_arr_S_3D / 1000, dxyz, src_loc=node_coords, rx_loc=receiver_coords)
             # Calculate incidence angle at array:
-            ray_vec_at_receiver = - np.array([ ray[-1,1] - ray[-2,1], ray[-1,2] - ray[-2,2] ]) # Note minus sign, as defining as vector out from array
-            vert_vec = np.array([ 0,  1])
-            theta_curr = np.arccos( ( ray_vec_at_receiver.dot(vert_vec) ) / ( vec_norm(ray_vec_at_receiver) * vec_norm(vert_vec) ) ) # cos(theta) = a.b / |a| |b|
-            theta_curr = np.rad2deg(theta_curr)
-            theta_grid_S[i,j] = theta_curr
+            try:
+                ray_vec_at_receiver = - np.array([ ray[-1,1] - ray[-2,1], ray[-1,2] - ray[-2,2] ]) # Note minus sign, as defining as vector out from array
+                vert_vec = np.array([ 0,  1])
+                theta_curr = np.arccos( ( ray_vec_at_receiver.dot(vert_vec) ) / ( vec_norm(ray_vec_at_receiver) * vec_norm(vert_vec) ) ) # cos(theta) = a.b / |a| |b|
+                theta_curr = np.rad2deg(theta_curr)
+                theta_grid_S[i,j] = theta_curr
+            except IndexError:
+                # Or assign previous value, if failed to trace rays for some reason:
+                if j>0:
+                    theta_grid_S[i,j] = theta_grid_S[i,j-1]
+                else:
+                    theta_grid_S[i,j] = theta_grid_S[i-1,j]
             # And clear up:
             del ray 
             gc.collect()

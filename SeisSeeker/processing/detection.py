@@ -22,7 +22,7 @@ import gc
 import time 
 import glob 
 import pickle
-from SeisSeeker.processing import lookup_table_manager 
+from SeisSeeker.processing import lookup_table_manager, location 
 
 
 
@@ -277,6 +277,10 @@ class setup_detection:
         self.bazi_tol = 20.
         self.max_phase_sep_s = 2.5
         self.filt_phase_assoc_by_max_power = True
+        # For location:
+        self.receiver_vp = None
+        self.receiver_vs = None
+        self.array_latlon = None
 
 
     def _setup_array_receiver_coords(self):
@@ -797,6 +801,7 @@ class setup_detection:
         self.LUTs_fname = os.path.join(LUT_outdir, 'LUTs.pkl')
         pickle.dump( LUTs_dict, open( self.LUTs_fname, "wb" ) )
         print("Saved LUT to:", self.LUTs_fname)
+        self.LUTs_dict = LUTs_dict 
         return LUTs_dict
 
     def load_location_LUTs(self, LUTs_fname=None):
@@ -817,7 +822,34 @@ class setup_detection:
         self.extent_x_m = LUTs_dict['extent_x_m']
         self.dxz = LUTs_dict['dxz']
         self.array_centre_xz = LUTs_dict['array_centre_xz']
+        self.LUTs_dict = LUTs_dict 
         return LUTs_dict
+
+    
+    def locate_events(self, events_df, verbosity=0):
+        """Function to locate events using LUT."""
+        # Perform tests to check that various required attributes are specified:
+        exit_bool = False
+        if not self.LUTs_dict:
+            print("Warning: LUTs_dict class attribute not specified. Exiting.")
+            exit_bool = True
+        if not self.array_latlon:
+            print("Warning: array_latlon class attribute not specified. Exiting.")
+            exit_bool = True
+        if not self.receiver_vp:
+            print("Warning: receiver_vp class attribute not specified. Exiting.")
+            exit_bool = True
+        if not self.receiver_vs:
+            print("Warning: receiver_vs class attribute not specified. Exiting.")
+            exit_bool = True
+
+        # Locate events:
+        if not exit_bool:
+            events_df = location.locate_events_from_P_and_S_array_arrivals(events_df, self.LUTs_dict, self.array_latlon, 
+                                                                            self.receiver_vp, self.receiver_vs, 
+                                                                            verbosity=verbosity)
+        
+        return events_df
 
 
 
