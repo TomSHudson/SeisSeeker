@@ -219,7 +219,7 @@ class setup_detection:
 
     """
     
-    def __init__(self, archivedir, outdir, stations_fname, starttime, endtime, channels_to_use=["??Z"]):
+    def __init__(self, archivedir, outdir, stations_fname, starttime, endtime, preload_fname=None, channels_to_use=["??Z"]):
         """Initiate the class object.
 
         Parameters
@@ -239,7 +239,11 @@ class setup_detection:
             Start time of data window to process for.
 
         endtime : obspy UTCDateTime object
-        End time of data window to process for.
+            End time of data window to process for.
+
+        preload_fname : str
+            Path to previously created detection class object. Optional. Default is 
+            None, which means it doesn't load an existing file.
 
         channels_to_use : list of strs (optional, default = ["??Z"])
             List of channels to use for the processing (e.g. HHZ, ??Z or similar).
@@ -281,6 +285,10 @@ class setup_detection:
         self.receiver_vp = None
         self.receiver_vs = None
         self.array_latlon = None
+
+        # And load existing detection instance, if specified:
+        if preload_fname:
+            self.load(preload_fname)
 
 
     def _setup_array_receiver_coords(self):
@@ -850,6 +858,32 @@ class setup_detection:
                                                                             verbosity=verbosity)
         
         return events_df
+    
+
+    def save(self, out_fname=None):
+        """Function to save class object to file.
+        Parameters
+        ----------
+        out_fname : str
+            Path to save class object to. Optional. If not specified, then save to 
+            <outdir>/detect_obj.pkl.
+        """
+        # Save class to file:
+        if not out_fname:
+            out_fname = os.path.join(self.outdir, "detect_obj.pkl")
+        f = open(out_fname, 'wb')
+        pickle.dump(self.__dict__, f)
+        f.close()
+        print("Saved detection instance to:", out_fname)
+    
+    def load(self, preload_fname):
+        """try load self.name.txt"""
+        f = open(preload_fname, 'rb')
+        self.__dict__ = pickle.load(f) 
+        f.close()
+        print("Loaded detection instance from:", preload_fname)
+
+
 
 
 
