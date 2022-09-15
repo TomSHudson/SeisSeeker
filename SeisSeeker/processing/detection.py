@@ -349,7 +349,7 @@ class setup_detection:
         print("="*60)
 
 
-    def _load_day_of_data(self, year, julday):
+    def _load_day_of_data(self, year, julday, hour=None):
         """Function to load a day of data."""
         # Load in data:
         mseed_dir = os.path.join(self.archivedir, str(year), str(julday).zfill(3))
@@ -358,7 +358,10 @@ class setup_detection:
             station = row['Name']
             for channel in self.channels_to_use:
                 try:
-                    st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_*", station, "*", channel, "*"))))
+                    if hour:
+                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_", str(hour).zfill(2), "*", station, "*", channel, "*"))))
+                    else:
+                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_*", station, "*", channel, "*"))))
                     for tr in st_tmp:
                         st.append(tr)
                 except:
@@ -478,105 +481,129 @@ class setup_detection:
                     print("="*60)
                     print("Processing data for year "+str(year)+", day "+str(julday).zfill(3)+", channel "+self.channel_curr)
 
-                    # Create datastore:
-                    out_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
+                    # And process for individual hours:
+                    # (to reduce memory usage)
+                    for hour in range(24):
+                        print("Processing for hour", str(hour).zfill(2))
+                        if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
+                            continue
+                        if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour):
+                            continue
 
-                    # Load data:
-                    st = self._load_day_of_data(year, julday)
-                    starttime_this_day = st[0].stats.starttime
+                        # Create datastore:
+                        out_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
 
-                    # Convert data to np:
-                    data = self._convert_st_to_np_data(st)
-                    del st 
-                    gc.collect()
+                        # Load data:
+                        st = self._load_day_of_data(year, julday, hour=hour)
+                        # starttime_this_day = obspy.UTCDateTime(year=year, julday=julday)
+                        try:
+                            starttime_this_st = st[0].stats.starttime
+                        except IndexError:
+                            # And skip if no data:
+                            print("Skipping hour as no data")
+                            del st 
+                            gc.collect()
+                            continue
 
-                    # Run heavy array processing algorithm:
-                    # Specify various variables needed:
-                    # Make a linear spacing of frequencies. One might use periods, logspacing, etc.:
-                    # (Note: linspace much less noisy than logspace)
-                    target_freqs = np.linspace(self.freqmin,self.freqmax,self.num_freqs) #np.logspace(self.freqmin,self.freqmax,self.num_freqs) 
-                    # Station locations:
-                    xx = self.stations_df['x_array_coords_km'].values
-                    yy = self.stations_df['y_array_coords_km'].values
-                    # Run initial numba jit compile:
-                    if init_numba_compile_switch:
-                        print("Performing initial compile")
-                        init_data = data[0,:,:].copy()
-                        init_data = init_data.reshape((1, data[0,:,:].shape[0], data[0,:,:].shape[1]))
-                        Pfreq_all = _fast_freq_domain_array_proc(init_data, self.max_sl, self.fs, target_freqs, xx, yy, 
-                                                                    self.n_stations, self.n_t_samp, self.remove_autocorr)
-                        init_numba_compile_switch = False
-                    # And run:
-                    # if self.nproc == 1:
-                    tic = time.time()
-                    print("Performing run for",data.shape[0],"windows")
-                    Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
-                                                                    self.n_stations, self.n_t_samp, self.remove_autocorr)
-                    toc = time.time()
-                    print(toc-tic)
-                    # else:
-                    #     # pool = mp.Pool(mp.cpu_count())
-                    #     # print("Using", mp.cpu_count(), "CPUs.")
-                    #     # Pfreq_all = [pool.apply(_fast_freq_domain_array_proc, args=(win.reshape((1, win.shape[0], win.shape[1])), self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)) for win in data] # Loop over windows of data
-                    #     # pool.close()
 
-                    #     print("Using", self.nproc, "CPUs.")
-                    #     # Start jobs:
-                    #     manager = mp.Manager()
-                    #     return_dict_Pfreq_all = manager.dict() # for returning data
-                    #     jobs = []
-                    #     n_samp_per_proc = int(data.shape[0] / self.nproc)
-                    #     for procnum in np.arange(self.nproc):
-                    #         win_start_idx = int(procnum * n_samp_per_proc)
-                    #         if procnum + 1 < self.nproc:
-                    #             win_end_idx = int((procnum + 1) * n_samp_per_proc)
-                    #         else:
-                    #             win_end_idx = -1
-                    #         p = mp.Process(target=_submit_parallel_fast_freq_domain_array_proc, args=(procnum, return_dict_Pfreq_all, 
-                    #                         data[win_start_idx:win_end_idx, :, :], self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, 
-                    #                         self.remove_autocorr))
-                    #         jobs.append(p)
-                    #         p.start() # Start process
-                    #     # And join processes together:
-                    #     for p in jobs:
-                    #         p.join()
-                    #     # And get data:
-                    #     for procnum in np.arange(self.nproc):
-                    #         # Append, as in chronological order already:
-                    #         Pfreq_all = return_dict_Pfreq_all[procnum]
-                    #     Pfreq_all = flatten_list(Pfreq_all)
-                    #     del return_dict_Pfreq_all
-                    #     gc.collect()
+                        # Convert data to np:
+                        data = self._convert_st_to_np_data(st)
+                        del st 
+                        gc.collect()
 
-                    # And remove any data where stations don't exist:
-                    # for i in np.arange(len(Pfreq_all)):
-                        # Pfreq_all[i] = np.nan_to_num(Pfreq_all[i], copy=False, nan=0.0)
-                    Pfreq_all = np.nan_to_num(Pfreq_all, copy=False, nan=0.0)
+                        # Run heavy array processing algorithm:
+                        # Specify various variables needed:
+                        # Make a linear spacing of frequencies. One might use periods, logspacing, etc.:
+                        # (Note: linspace much less noisy than logspace)
+                        target_freqs = np.linspace(self.freqmin,self.freqmax,self.num_freqs) #np.logspace(self.freqmin,self.freqmax,self.num_freqs) 
+                        # Station locations:
+                        xx = self.stations_df['x_array_coords_km'].values
+                        yy = self.stations_df['y_array_coords_km'].values
+                        # Run initial numba jit compile:
+                        if init_numba_compile_switch:
+                            print("Performing initial compile")
+                            init_data = data[0,:,:].copy()
+                            init_data = init_data.reshape((1, data[0,:,:].shape[0], data[0,:,:].shape[1]))
+                            Pfreq_all = _fast_freq_domain_array_proc(init_data, self.max_sl, self.fs, target_freqs, xx, yy, 
+                                                                        self.n_stations, self.n_t_samp, self.remove_autocorr)
+                            init_numba_compile_switch = False
+                        # And run:
+                        # if self.nproc == 1:
+                        tic = time.time()
+                        print("Performing run for",data.shape[0],"windows")
+                        Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
+                                                                        self.n_stations, self.n_t_samp, self.remove_autocorr)
+                        toc = time.time()
+                        print(toc-tic)
+                        # else:
+                        #     # pool = mp.Pool(mp.cpu_count())
+                        #     # print("Using", mp.cpu_count(), "CPUs.")
+                        #     # Pfreq_all = [pool.apply(_fast_freq_domain_array_proc, args=(win.reshape((1, win.shape[0], win.shape[1])), self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)) for win in data] # Loop over windows of data
+                        #     # pool.close()
 
-                    # Sum/stack/normallise data:
-                    Psum_all = self._stack_results(Pfreq_all)
-                    del Pfreq_all
-                    gc.collect()
+                        #     print("Using", self.nproc, "CPUs.")
+                        #     # Start jobs:
+                        #     manager = mp.Manager()
+                        #     return_dict_Pfreq_all = manager.dict() # for returning data
+                        #     jobs = []
+                        #     n_samp_per_proc = int(data.shape[0] / self.nproc)
+                        #     for procnum in np.arange(self.nproc):
+                        #         win_start_idx = int(procnum * n_samp_per_proc)
+                        #         if procnum + 1 < self.nproc:
+                        #             win_end_idx = int((procnum + 1) * n_samp_per_proc)
+                        #         else:
+                        #             win_end_idx = -1
+                        #         p = mp.Process(target=_submit_parallel_fast_freq_domain_array_proc, args=(procnum, return_dict_Pfreq_all, 
+                        #                         data[win_start_idx:win_end_idx, :, :], self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, 
+                        #                         self.remove_autocorr))
+                        #         jobs.append(p)
+                        #         p.start() # Start process
+                        #     # And join processes together:
+                        #     for p in jobs:
+                        #         p.join()
+                        #     # And get data:
+                        #     for procnum in np.arange(self.nproc):
+                        #         # Append, as in chronological order already:
+                        #         Pfreq_all = return_dict_Pfreq_all[procnum]
+                        #     Pfreq_all = flatten_list(Pfreq_all)
+                        #     del return_dict_Pfreq_all
+                        #     gc.collect()
+                        # And tidy:
+                        del data 
+                        gc.collect()
 
-                    # Calculate time-series outputs (for detection) from data:
-                    t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
-                    
-                    # And append to data out:
-                    t_series_out = []
-                    for t_serie in t_series:
-                        t_series_out.append( str(starttime_this_day + t_serie) )
-                    tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                    out_df = out_df.append(tmp_df)
+                        # And remove any data where stations don't exist:
+                        # for i in np.arange(len(Pfreq_all)):
+                            # Pfreq_all[i] = np.nan_to_num(Pfreq_all[i], copy=False, nan=0.0)
+                        Pfreq_all = np.nan_to_num(Pfreq_all, copy=False, nan=0.0)
 
-                    # And save data out:
-                    out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
-                                                str(starttime_this_day.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
-                    out_df.to_csv(out_fname, index=False)
-                    self.out_fnames_array_proc.append(out_fname)
+                        # Sum/stack/normallise data:
+                        Psum_all = self._stack_results(Pfreq_all)
+                        del Pfreq_all
+                        gc.collect()
 
-                    # And clear memory:
-                    del Psum_all, t_series, powers, slownesses, back_azis, out_df
-                    gc.collect()
+                        # Calculate time-series outputs (for detection) from data:
+                        t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
+                        
+                        # And append to data out:
+                        t_series_out = []
+                        for t_serie in t_series:
+                            t_series_out.append( str(starttime_this_st + t_serie) )
+                        tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
+                        out_df = out_df.append(tmp_df)
+
+                        # And save data out:
+                        out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
+                                                    str(starttime_this_st.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
+                        out_df.to_csv(out_fname, index=False)
+
+                        # And append fname to history:
+                        self.out_fnames_array_proc.append(out_fname)
+
+                        # And clear memory:
+                        del Psum_all, t_series, powers, slownesses, back_azis, out_df
+                        gc.collect()
+
 
         return None
 
