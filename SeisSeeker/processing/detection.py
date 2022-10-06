@@ -125,6 +125,208 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
     return Pfreq_all 
 
 
+# @jit(nopython=True, parallel=True)#, nogil=True)
+def _phase_associator_core_worker(peaks_Z, peaks_hor, bazis_Z, bazis_hor, bazi_tol, t_Z_secs_after_start, t_hor_secs_after_start, max_phase_sep_s):
+    """Function to do the heavy lifting of the phase association."""
+    # Specify data stores:
+    Z_hor_phase_pair_idxs = []
+
+    # Loop over phases, seeing if they meet phase association criteria:
+    for i in range(len(peaks_Z)):
+        if i % 1000 == 0:
+            print(i,"/",len(peaks_Z))
+        curr_peak_Z_idx = peaks_Z[i]
+        for j in range(len(peaks_hor)):
+            curr_peak_hor_idx = peaks_hor[j]
+            # i. Check if phase arrivals are within specified time limits:
+            curr_t_phase_diff = t_hor_secs_after_start[curr_peak_hor_idx] - t_Z_secs_after_start[curr_peak_Z_idx]
+            if curr_t_phase_diff > 0:
+                if curr_t_phase_diff <= max_phase_sep_s:
+                    # ii. Check if bazis for Z and horizontals current pick match:
+                    if np.abs( bazis_Z[i] - bazis_hor[j] ) < bazi_tol:
+                        match = True
+                    # And deal with if they are close to North:
+                    elif np.abs( bazis_Z[i] - bazis_hor[j] ) > (360. - bazi_tol):
+                        match = True
+                    else:
+                        match = False
+
+                    # And associate phases and create event data if a match is found:
+                    if match:
+                        # Append pair idxs to data store:
+                        Z_hor_phase_pair_idxs.append([curr_peak_Z_idx, curr_peak_hor_idx])
+    
+    return Z_hor_phase_pair_idxs
+
+
+def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_tol, filt_phase_assoc_by_max_power, max_phase_sep_s, verbosity=0):
+    """
+    Function to perform phase association.
+    """
+    # Setup events datastores:
+    events_df = pd.DataFrame()
+    # Find back-azimuths associated with phase picks:
+    bazis_Z = t_series_df_Z['back_azi'].values[peaks_Z]
+    bazis_hor = t_series_df_hor['back_azi'].values[peaks_hor]
+
+    #-------------------------------------------------------------------
+    # Perform core phae association:
+    # Prep. data for numba format:
+    if verbosity > 1:
+        print("Pre-processing time-series")
+    t_Z_secs_after_start = []
+    for index, row in t_series_df_Z.iterrows():
+        t_Z_secs_after_start.append(obspy.UTCDateTime(row['t']) - obspy.UTCDateTime(t_series_df_Z['t'][0]))
+    t_hor_secs_after_start = []
+    for index, row in t_series_df_hor.iterrows():
+        t_hor_secs_after_start.append(obspy.UTCDateTime(row['t']) - obspy.UTCDateTime(t_series_df_hor['t'][0]))
+    # Run function:
+    if verbosity > 1:
+        print("Performing phase association")
+    Z_hor_phase_pair_idxs = _phase_associator_core_worker(peaks_Z, peaks_hor, bazis_Z, bazis_hor, bazi_tol, t_Z_secs_after_start, t_hor_secs_after_start, max_phase_sep_s)
+    # Organise outputs into useful form:
+    if verbosity > 1:
+        print("Writing events")
+    for event_idx in range(len(Z_hor_phase_pair_idxs)):
+        curr_peak_Z_idx = Z_hor_phase_pair_idxs[event_idx][0]
+        curr_peak_hor_idx = Z_hor_phase_pair_idxs[event_idx][1]
+        curr_event_df = pd.DataFrame({'t1': [t_series_df_Z['t'][curr_peak_Z_idx]], 't2': [t_series_df_hor['t'][curr_peak_hor_idx]], 
+                                            'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
+                                            'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
+                                            'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
+        events_df = events_df.append(curr_event_df)
+    # And tidy:
+    del t_Z_secs_after_start, t_hor_secs_after_start, Z_hor_phase_pair_idxs
+    gc.collect()
+    #-------------------------------------------------------------------
+
+    # And filter events to only output events with max. power within the max. phase window, 
+    # if speficifed by user:
+    if filt_phase_assoc_by_max_power:
+        if verbosity > 1:
+            print("Filtering events by max. power")
+        # Calculate max power of P and S for each potential event:
+        # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
+        # Define datastores:
+        filt_events_df = pd.DataFrame()
+        # And loop over events, selecting only max. power events:
+        tmp_count = 0
+        for index, row in events_df.iterrows():
+            tmp_count+=1
+            if tmp_count == 1:
+                tmp_df = pd.DataFrame()
+                tmp_df = tmp_df.append(row)
+            else:
+                if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < max_phase_sep_s:
+                    # Append event to compare:
+                    tmp_df = tmp_df.append(row)
+                else:
+                    # Find best event from previous events:
+                    combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+                    max_power_idx = np.argmax(combined_pows_tmp)
+                    filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+
+                    # And start acrewing new events:
+                    tmp_df = pd.DataFrame()
+                    tmp_df = tmp_df.append(row)
+        # And calculate highest power event for final window:
+        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+        max_power_idx = np.argmax(combined_pows_tmp)
+        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+        # And output df:
+        events_df = filt_events_df.copy()
+        # del filt_events_df
+        # gc.collect()
+
+    return events_df
+
+
+# def _phase_associator_wrapper():
+#     """
+#     Function to wrap phase associater, to reformat outputs.
+#     """
+#     events_df = pd.DataFrame()
+#     _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_tol, filt_phase_assoc_by_max_power, max_phase_sep_s)
+
+
+
+# def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_tol, filt_phase_assoc_by_max_power, max_phase_sep_s):
+#     """
+#     Function to perform phase association.
+#     """
+#     # Setup events datastore:
+#     events_df = pd.DataFrame()
+#     # Find back-azimuths associated with phase picks:
+#     bazis_Z = t_series_df_Z['back_azi'].values[peaks_Z]
+#     bazis_hor = t_series_df_hor['back_azi'].values[peaks_hor]
+#     # Loop over phases, seeing if they meet phase association criteria:
+#     for i in range(len(peaks_Z)):
+#         curr_peak_Z_idx = peaks_Z[i]
+#         for j in range(len(peaks_hor)):
+#             curr_peak_hor_idx = peaks_hor[j]
+#             # i. Check if bazis for Z and horizontals current pick match:
+#             if np.abs( bazis_Z[i] - bazis_hor[j] ) < bazi_tol:
+#                 match = True
+#             # And deal with if they are close to North:
+#             elif np.abs( bazis_Z[i] - bazis_hor[j] ) > (360. - bazi_tol):
+#                 match = True
+#             else:
+#                 match = False
+#             # ii. Check if phase arrivals are within specified limits:
+#             if match == True:
+#                 if obspy.UTCDateTime(t_series_df_hor['t'][curr_peak_hor_idx]) - obspy.UTCDateTime(t_series_df_Z['t'][curr_peak_Z_idx]):
+#                     match = True
+#                 else:
+#                     match = False 
+
+#             # And associate phases and create event data if a match is found:
+#             if match:
+#                 # Write event:
+#                 curr_event_df = pd.DataFrame({'t1': [t_series_df_Z['t'][curr_peak_Z_idx]], 't2': [t_series_df_hor['t'][curr_peak_hor_idx]], 
+#                                             'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
+#                                             'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
+#                                             'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
+#                 events_df = events_df.append(curr_event_df)
+
+#     # And filter events to only output events with max. power within the max. phase window, 
+#     # if speficifed by user:
+#     if filt_phase_assoc_by_max_power:
+#         # Calculate max power of P and S for each potential event:
+#         # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
+#         # Define datastores:
+#         filt_events_df = pd.DataFrame()
+#         # And loop over events, selecting only max. power events:
+#         tmp_count = 0
+#         for index, row in events_df.iterrows():
+#             tmp_count+=1
+#             if tmp_count == 1:
+#                 tmp_df = pd.DataFrame()
+#                 tmp_df = tmp_df.append(row)
+#             else:
+#                 if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < max_phase_sep_s:
+#                     # Append event to compare:
+#                     tmp_df = tmp_df.append(row)
+#                 else:
+#                     # Find best event from previous events:
+#                     combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+#                     max_power_idx = np.argmax(combined_pows_tmp)
+#                     filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+
+#                     # And start acrewing new events:
+#                     tmp_df = pd.DataFrame()
+#                     tmp_df = tmp_df.append(row)
+#         # And calculate highest power event for final window:
+#         combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+#         max_power_idx = np.argmax(combined_pows_tmp)
+#         filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+#         # And output df:
+#         events_df = filt_events_df.copy()
+#         # del filt_events_df
+#         # gc.collect()
+
+#     return events_df
+
+
 def _submit_parallel_fast_freq_domain_array_proc(procnum, return_dict_Pfreq_all, data_curr_run, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
     """Function to submit parallel runs of _fast_freq_domain_array_proc() function."""
     # Run function:
@@ -532,46 +734,12 @@ class setup_detection:
                             #                                                 self.n_stations, self.n_t_samp, self.remove_autocorr)
                             #     init_numba_compile_switch = False
                             # And run:
-                            # if self.nproc == 1:
                             tic = time.time()
                             print("Performing run for",data.shape[0],"windows")
                             Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
                                                                             self.n_stations, self.n_t_samp, self.remove_autocorr)
                             toc = time.time()
                             print(toc-tic)
-                            # else:
-                            #     # pool = mp.Pool(mp.cpu_count())
-                            #     # print("Using", mp.cpu_count(), "CPUs.")
-                            #     # Pfreq_all = [pool.apply(_fast_freq_domain_array_proc, args=(win.reshape((1, win.shape[0], win.shape[1])), self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)) for win in data] # Loop over windows of data
-                            #     # pool.close()
-
-                            #     print("Using", self.nproc, "CPUs.")
-                            #     # Start jobs:
-                            #     manager = mp.Manager()
-                            #     return_dict_Pfreq_all = manager.dict() # for returning data
-                            #     jobs = []
-                            #     n_samp_per_proc = int(data.shape[0] / self.nproc)
-                            #     for procnum in np.arange(self.nproc):
-                            #         win_start_idx = int(procnum * n_samp_per_proc)
-                            #         if procnum + 1 < self.nproc:
-                            #             win_end_idx = int((procnum + 1) * n_samp_per_proc)
-                            #         else:
-                            #             win_end_idx = -1
-                            #         p = mp.Process(target=_submit_parallel_fast_freq_domain_array_proc, args=(procnum, return_dict_Pfreq_all, 
-                            #                         data[win_start_idx:win_end_idx, :, :], self.max_sl, self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, 
-                            #                         self.remove_autocorr))
-                            #         jobs.append(p)
-                            #         p.start() # Start process
-                            #     # And join processes together:
-                            #     for p in jobs:
-                            #         p.join()
-                            #     # And get data:
-                            #     for procnum in np.arange(self.nproc):
-                            #         # Append, as in chronological order already:
-                            #         Pfreq_all = return_dict_Pfreq_all[procnum]
-                            #     Pfreq_all = flatten_list(Pfreq_all)
-                            #     del return_dict_Pfreq_all
-                            #     gc.collect()
                             # And tidy:
                             del data 
                             gc.collect()
@@ -607,8 +775,7 @@ class setup_detection:
                             # And clear memory:
                             del Psum_all, t_series, powers, slownesses, back_azis
                             gc.collect()
-
-
+                            
         return None
 
     def _calculate_mad(self, x, scale=1.4826):
@@ -621,82 +788,6 @@ class setup_detection:
         mad = np.median(np.abs(x - np.median(x)))
         return scale * mad
     
-    def _phase_associator(self, t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor):
-        """
-        Function to perform phase association.
-        """
-        # Setup events datastore:
-        events_df = pd.DataFrame()
-        # Find back-azimuths associated with phase picks:
-        bazis_Z = t_series_df_Z['back_azi'].values[peaks_Z]
-        bazis_hor = t_series_df_hor['back_azi'].values[peaks_hor]
-        # Loop over phases, seeing if they meet phase association criteria:
-        for i in range(len(peaks_Z)):
-            curr_peak_Z_idx = peaks_Z[i]
-            for j in range(len(peaks_hor)):
-                curr_peak_hor_idx = peaks_hor[j]
-                # i. Check if bazis for Z and horizontals current pick match:
-                if np.abs( bazis_Z[i] - bazis_hor[j] ) < self.bazi_tol:
-                    match = True
-                # And deal with if they are close to North:
-                elif np.abs( bazis_Z[i] - bazis_hor[j] ) > (360. - self.bazi_tol):
-                    match = True
-                else:
-                    match = False
-                # ii. Check if phase arrivals are within specified limits:
-                if match == True:
-                    if obspy.UTCDateTime(t_series_df_hor['t'][curr_peak_hor_idx]) - obspy.UTCDateTime(t_series_df_Z['t'][curr_peak_Z_idx]):
-                        match = True
-                    else:
-                        match = False 
-
-                # And associate phases and create event data if a match is found:
-                if match:
-                    # Write event:
-                    curr_event_df = pd.DataFrame({'t1': [t_series_df_Z['t'][curr_peak_Z_idx]], 't2': [t_series_df_hor['t'][curr_peak_hor_idx]], 
-                                                'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
-                                                'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
-                                                'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
-                    events_df = events_df.append(curr_event_df)
-
-        # And filter events to only output events with max. power within the max. phase window, 
-        # if speficifed by user:
-        if self.filt_phase_assoc_by_max_power:
-            # Calculate max power of P and S for each potential event:
-            # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
-            # Define datastores:
-            filt_events_df = pd.DataFrame()
-            # And loop over events, selecting only max. power events:
-            tmp_count = 0
-            for index, row in events_df.iterrows():
-                tmp_count+=1
-                if tmp_count == 1:
-                    tmp_df = pd.DataFrame()
-                    tmp_df = tmp_df.append(row)
-                else:
-                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < self.max_phase_sep_s:
-                        # Append event to compare:
-                        tmp_df = tmp_df.append(row)
-                    else:
-                        # Find best event from previous events:
-                        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-                        max_power_idx = np.argmax(combined_pows_tmp)
-                        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
-
-                        # And start acrewing new events:
-                        tmp_df = pd.DataFrame()
-                        tmp_df = tmp_df.append(row)
-            # And calculate highest power event for final window:
-            combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-            max_power_idx = np.argmax(combined_pows_tmp)
-            filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
-            # And output df:
-            events_df = filt_events_df.copy()
-            del filt_events_df
-            gc.collect()
-
-
-        return events_df
     
     def detect_events(self, verbosity=0):
         """Function to detect events, based on the power time-series generated 
@@ -759,7 +850,8 @@ class setup_detection:
             peaks_hor, _ = find_peaks(t_series_df_hor['power'].values, height=mad_pick_threshold_hor, distance=min_pick_dist)
 
             # Phase assoicate by BAZI threshold and max. power:
-            events_df = self._phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor)
+            events_df = _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, 
+                                                self.bazi_tol, self.filt_phase_assoc_by_max_power, self.max_phase_sep_s, verbosity=verbosity)
             # Plot detected, phase-associated picks:
             if verbosity > 1:
                 print("="*40)
