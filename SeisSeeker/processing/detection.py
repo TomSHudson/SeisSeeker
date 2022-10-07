@@ -592,7 +592,6 @@ class setup_detection:
         self._setup_array_receiver_coords()
 
         # Loop over years:
-        # init_numba_compile_switch = True
         for year in range(self.starttime.year, self.endtime.year+1):
             # Loop over days:
             for julday in range(1,367):
@@ -650,7 +649,7 @@ class setup_detection:
                             # Trim data:
                             st_trimmed = st.copy()
                             if self.endtime - self.starttime > 60:
-                                st_trimmed.trim(starttime=st[0].stats.starttime+(minute*60), endtime=st[0].stats.starttime+((minute+1)*60))
+                                st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60)
                             else:
                                 st_trimmed.trim(starttime=self.starttime, endtime=self.endtime)
 
@@ -667,14 +666,6 @@ class setup_detection:
                             # Station locations:
                             xx = self.stations_df['x_array_coords_km'].values
                             yy = self.stations_df['y_array_coords_km'].values
-                            # Run initial numba jit compile:
-                            # if init_numba_compile_switch:
-                            #     print("Performing initial compile")
-                            #     init_data = data[0,:,:].copy()
-                            #     init_data = init_data.reshape((1, data[0,:,:].shape[0], data[0,:,:].shape[1]))
-                            #     Pfreq_all = _fast_freq_domain_array_proc(init_data, self.max_sl, self.fs, target_freqs, xx, yy, 
-                            #                                                 self.n_stations, self.n_t_samp, self.remove_autocorr)
-                            #     init_numba_compile_switch = False
                             # And run:
                             tic = time.time()
                             print("Performing run for",data.shape[0],"windows")
@@ -701,10 +692,15 @@ class setup_detection:
                             
                             # And append to data out:
                             t_series_out = []
-                            for t_serie in t_series:
-                                t_series_out.append( str(starttime_this_st + t_serie) )
+                            if self.endtime - self.starttime > 60:
+                                for t_serie in t_series:
+                                    t_series_out.append( str(starttime_this_st + (minute*60) + t_serie) )
+                            else:
+                                for t_serie in t_series:
+                                    t_series_out.append( str(starttime_this_st + t_serie) )
                             tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
                             out_df = out_df.append(tmp_df)
+                            out_df.reset_index(drop=True, inplace=True)
 
                             # And save data out:
                             out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
