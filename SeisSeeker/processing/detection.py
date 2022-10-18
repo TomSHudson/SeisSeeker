@@ -203,54 +203,56 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
     # And filter events to only output events with max. power within the max. phase window, 
     # if speficifed by user:
     if filt_phase_assoc_by_max_power:
-        # Calculate max power of P and S for each potential event:
-        # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
-        # Define datastores:
-        filt_events_df = pd.DataFrame()
-        # And loop over events, selecting only max. power events:
-        tmp_count = 0
-        for index, row in events_df.iterrows():
-            tmp_count+=1
-            if tmp_count == 1:
-                tmp_df = pd.DataFrame()
-                tmp_df = tmp_df.append(row)
-            else:
-                # Append event if phase within minimum event separation:
-                if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < min_event_sep_s:
-                    # Append event to compare:
-                    tmp_df = tmp_df.append(row)
-                else:
-                    # Find best event from previous events:
-                    combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-                    max_power_idx = np.argmax(combined_pows_tmp)
-                    filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
-
-                    # And start acrewing new events:
+        # Only process if found some events:
+        if len(events_df) > 0:
+            # Calculate max power of P and S for each potential event:
+            # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
+            # Define datastores:
+            filt_events_df = pd.DataFrame()
+            # And loop over events, selecting only max. power events:
+            tmp_count = 0
+            for index, row in events_df.iterrows():
+                tmp_count+=1
+                if tmp_count == 1:
                     tmp_df = pd.DataFrame()
                     tmp_df = tmp_df.append(row)
-        # And calculate highest power event for final window:
-        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-        max_power_idx = np.argmax(combined_pows_tmp)
-        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+                else:
+                    # Append event if phase within minimum event separation:
+                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < min_event_sep_s:
+                        # Append event to compare:
+                        tmp_df = tmp_df.append(row)
+                    else:
+                        # Find best event from previous events:
+                        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+                        max_power_idx = np.argmax(combined_pows_tmp)
+                        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
 
-        # And sort indices:
-        filt_events_df.reset_index(drop=True, inplace=True)
+                        # And start acrewing new events:
+                        tmp_df = pd.DataFrame()
+                        tmp_df = tmp_df.append(row)
+            # And calculate highest power event for final window:
+            combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
+            max_power_idx = np.argmax(combined_pows_tmp)
+            filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
 
-        # And remove duplicate S pick associations:
-        # (using same max. power method)
-        # Append summed powers, for sorting:
-        sum_pows = filt_events_df['pow1'].values + filt_events_df['pow2'].values
-        sum_pows_df = pd.DataFrame({'sum_pows': sum_pows})
-        filt_events_df = filt_events_df.join(sum_pows_df)
-        # Remove t2 duplicates, keep highest summed power:
-        filt_events_df = filt_events_df.sort_values('sum_pows').drop_duplicates(subset='t2', keep='last')
-        # And remove sum_pows column:
-        filt_events_df = filt_events_df.drop(columns=['sum_pows'])
+            # And sort indices:
+            filt_events_df.reset_index(drop=True, inplace=True)
 
-        # And output df:
-        events_df = filt_events_df.copy()
-        del filt_events_df
-        gc.collect()
+            # And remove duplicate S pick associations:
+            # (using same max. power method)
+            # Append summed powers, for sorting:
+            sum_pows = filt_events_df['pow1'].values + filt_events_df['pow2'].values
+            sum_pows_df = pd.DataFrame({'sum_pows': sum_pows})
+            filt_events_df = filt_events_df.join(sum_pows_df)
+            # Remove t2 duplicates, keep highest summed power:
+            filt_events_df = filt_events_df.sort_values('sum_pows').drop_duplicates(subset='t2', keep='last')
+            # And remove sum_pows column:
+            filt_events_df = filt_events_df.drop(columns=['sum_pows'])
+
+            # And output df:
+            events_df = filt_events_df.copy()
+            del filt_events_df
+            gc.collect()
 
     return events_df
 
