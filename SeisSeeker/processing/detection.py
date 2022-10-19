@@ -739,6 +739,8 @@ class setup_detection:
         - min_event_sep_s
         """
         print("Note: <mad_window_length_s> not yet implemented.")
+        # Create datastore:
+        events_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
         for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
             f_uid = fname[-20:-8]
@@ -762,6 +764,13 @@ class setup_detection:
                     t_series_df_E = pd.read_csv(fname_E)
             else:
                 continue # Skip file, as not previously been processed.
+            # And check to see that t-series exists within file:
+            if len(t_series_df_Z) == 0:
+                continue 
+            if len(t_series_df_N) == 0:
+                continue 
+            if len(t_series_df_E) == 0:
+                continue 
 
             # Combine horizontals:
             # (Using RMS of N and E signals for slowness and average for BAZI)
@@ -792,6 +801,10 @@ class setup_detection:
             # Phase assoicate by BAZI threshold and max. power:
             events_df = _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, 
                                                 self.bazi_tol, self.filt_phase_assoc_by_max_power, self.max_phase_sep_s, self.min_event_sep_s, verbosity=verbosity)
+
+            # Append to datastore:
+            events_df_all = events_df_all.append(events_df)
+
             # Plot detected, phase-associated picks:
             if verbosity > 1:
                 print("="*40)
@@ -809,8 +822,9 @@ class setup_detection:
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
                 plt.gca().xaxis.set_major_locator(plt.MaxNLocator(3))
                 plt.show()
-
-        return events_df
+        
+        return events_df_all
+    
     
     def create_location_LUTs(self, oneD_vel_model_z_df, extent_x_m=4000, dxz=[100,100], array_centre_xz=[0, 0]):
         """Function to create lookup tables used for location. Lookup tables created are:
