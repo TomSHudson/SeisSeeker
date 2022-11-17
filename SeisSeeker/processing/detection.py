@@ -265,6 +265,50 @@ def _submit_parallel_fast_freq_domain_array_proc(procnum, return_dict_Pfreq_all,
     return_dict_Pfreq_all[procnum] = Pfreq_all_curr_run
 
 
+def _calc_time_shift_from_array_cent(slow, bazi, x_arr_cent, y_arr_cent, x_rec, y_rec):
+    """Calculates time shift of signal at receiver from array centre for stacking data.
+    Note: All distances and velocities use km unless otherwise specified.
+    
+    Parameters
+    ----------
+    slow : float
+        Slowness of arrival, in s/km.
+    
+    bazi : float
+        Back azimuth of arrival in degrees from .
+
+    x_arr_cent : float
+        Location of centre of array in km East.
+
+    y_arr_cent : float
+        Location of centre of array in km North.
+
+    x_rec :
+        Location of receiver in km East.
+
+    y_rec
+        Location of receiver in km North.
+    """
+    # Calculate time shift:
+    # (formulated on 16th Nov 2022)
+    # Calculate angle from array centre to current receiver:
+    x0 = x_arr_cent
+    y0 = y_arr_cent
+    x1 = x_rec
+    y1 = y_rec
+    station_to_array_centre_angle_from_N = (np.pi/2) -  np.arctan2((y1-y0) , (x1-x0)) 
+    if station_to_array_centre_angle_from_N < 0:
+        station_to_array_centre_angle_from_N += 2*np.pi
+    # And calculate relative apparent velocity for current receiver:
+    rel_vel_curr = -1 * (1. / slow) * np.cos(station_to_array_centre_angle_from_N - np.deg2rad(bazi)) # (Note: minus convention for arrival at receivers of similar back-azimuths to ray arrive first).
+    # Calculate distance from centre to receiver:
+    rec_dist_curr = np.sqrt( (x1-x0)**2 + (y1-y0)**2 )
+    # And calculate time shift:
+    time_shift_curr = rec_dist_curr / rel_vel_curr # t = d/v
+
+    return time_shift_curr
+
+
 class setup_detection:
     """
     Class to create detection object, for running array detection algorithm.
@@ -959,6 +1003,74 @@ class setup_detection:
         self.__dict__ = pickle.load(f) 
         f.close()
         print("Loaded detection instance from:", preload_fname)
+
+    
+    def get_composite_array_st_from_bazi_slowness(self, st_out_fname, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10):
+        """Function to find array stacked stream from back-azimuth and slowness. Returns average amplitude 
+        time-series seismogram of stacked array data, for all three componets.
+        Parameters
+        ----------
+        st_out_fname : str
+            Filename of to save mseed data stream to.
+
+        arrival_time : obspy UTCDateTime object
+            Arrival time at array. Will output window around this time, as defined by 
+            <t_before_s> and <t_after_s>.
+
+        bazis_1_2 : list of 2 floats
+            Back-azimuth of event phase arrivals in vertical and horizontal, in degrees from North.
+
+        slows_1_2 : list of 2 floats
+            Slowness of event phase arrivals in vertical and horizontal, in seconds/km.
+
+        t_before_s : float
+            Time, in seconds, before arrival time to include in window. Optional. Default 
+            is 10 s.
+
+        t_after_s : float
+            Time, in seconds, after arrival time to include in window. Optional. Default 
+            is 10 s.     
+        """
+        # Load in raw mseed data:
+        st = self._load_day_of_data(arrival_time.year, arrival_time.julday, hour=arrival_time.hour)
+        # And trim data:
+        st.trim(starttime=arrival_time-t_before_s, endtime=arrival_time+t_after_s)
+
+        # Upsample data soas to provide best time shift later:
+        st.interpolate(sampling_rate=10*st[0].stats.sampling_rate)
+
+        # Find and perform time shifts for all receivers:
+        # Get array centre coords (in km):
+        xx = self.stations_df['x_array_coords_km'].values
+        yy = self.stations_df['y_array_coords_km'].values
+        x_arr_cent = np.mean(xx)
+        y_arr_cent = np.mean(yy)
+        # Loop over stations:
+        for i in range(len(st)):
+            # Find time shift:
+            # Get current station location:
+            curr_station = st[i].stats.station
+            x_rec = self.stations_df.loc[self.stations_df['Name'] == curr_station]['x_array_coords_km'].values[0]
+            y_rec = self.stations_df.loc[self.stations_df['Name'] == curr_station]['y_array_coords_km'].values[0]
+            # Select either vertical or horizontal slowness and back-azimuth, depending on component:
+            comp = st[i].stats.channel[-1]
+            if comp == 'Z':
+                bazi = bazis_1_2[0]
+                slow = slows_1_2[0]
+            elif comp == 'N' or comp == 'E' or comp == '1' or comp == '2':
+                bazi = bazis_1_2[1]
+                slow = slows_1_2[1]
+            # Calculate arrival time shift relative to centre of array:
+            time_shift_curr_s = _calc_time_shift_from_array_cent(slow, bazi, x_arr_cent, y_arr_cent, x_rec, y_rec)
+            
+            # And perform time shift on data:
+            n_samp_to_shift = round(time_shift_curr_s * st[i].stats.sampling_rate)
+            st[i].data = np.roll(st[i].data, n_samp_to_shift)
+        
+        # And save data:
+        st.write(st_out_fname, format="MSEED")
+
+
 
 
 
