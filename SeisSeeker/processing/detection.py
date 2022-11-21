@@ -309,6 +309,70 @@ def _calc_time_shift_from_array_cent(slow, bazi, x_arr_cent, y_arr_cent, x_rec, 
     return time_shift_curr
 
 
+def _create_stacked_data_st(st, Z_all, N_all, E_all):
+    """Function to create stacked data st."""
+
+    composite_st = obspy.Stream()
+    # For Z stacked:
+    tr = st[0].copy()
+    tr.stats.station = "STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"Z"
+    tr.data = np.sum(Z_all, axis=1)
+    composite_st.append(tr)
+    # For Z mean:
+    tr = st[0].copy()
+    tr.stats.station = "MEAN"
+    tr.stats.channel = st[0].stats.channel[0:2]+"Z"
+    tr.data = np.mean(Z_all, axis=1)
+    composite_st.append(tr)
+    # For Z stdev:
+    tr = st[0].copy()
+    tr.stats.station = "STDEV"
+    tr.stats.channel = st[0].stats.channel[0:2]+"Z"
+    tr.data = np.std(Z_all, axis=1)
+    composite_st.append(tr)
+    # For N stacked:
+    tr = st[0].copy()
+    tr.stats.station = "STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"N"
+    tr.data = np.sum(N_all, axis=1)
+    composite_st.append(tr)
+    # For N mean:
+    tr = st[0].copy()
+    tr.stats.station = "MEAN"
+    tr.stats.channel = st[0].stats.channel[0:2]+"N"
+    tr.data = np.mean(N_all, axis=1)
+    composite_st.append(tr)
+    # For N stdev:
+    tr = st[0].copy()
+    tr.stats.station = "STDEV"
+    tr.stats.channel = st[0].stats.channel[0:2]+"N"
+    tr.data = np.std(N_all, axis=1)
+    composite_st.append(tr)
+    # For E stacked:
+    tr = st[0].copy()
+    tr.stats.station = "STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"E"
+    tr.data = np.sum(E_all, axis=1)
+    composite_st.append(tr)
+    # For E mean:
+    tr = st[0].copy()
+    tr.stats.station = "MEAN"
+    tr.stats.channel = st[0].stats.channel[0:2]+"E"
+    tr.data = np.mean(E_all, axis=1)
+    composite_st.append(tr)
+    # For E stdev:
+    tr = st[0].copy()
+    tr.stats.station = "STDEV"
+    tr.stats.channel = st[0].stats.channel[0:2]+"E"
+    tr.data = np.std(E_all, axis=1)
+    composite_st.append(tr)
+    del tr
+    gc.collect()
+
+    return composite_st
+
+
 class setup_detection:
     """
     Class to create detection object, for running array detection algorithm.
@@ -1067,8 +1131,45 @@ class setup_detection:
             n_samp_to_shift = round(time_shift_curr_s * st[i].stats.sampling_rate)
             st[i].data = np.roll(st[i].data, n_samp_to_shift)
         
+        # And find stacked, mean and stdev of data:
+        n_stat = len(st.select(channel="??Z"))
+        # Get unique channels:
+        chan_labels_tmp = []
+        chan_labels_unique = []
+        for tr in st:
+            chan_labels_tmp.append(tr.stats.channel)
+        chan_labels_unique = list(set(chan_labels_tmp))
+        # Create datastores to save to:
+        Z_all = np.zeros((len(st[0].data), n_stat))
+        N_all = np.zeros((len(st[0].data), n_stat))
+        E_all = np.zeros((len(st[0].data), n_stat))
+
+        # Loop over st:
+        for i in range(n_stat):
+            Z_all[:,i] = st.select(channel="??Z")[i].data
+            try: 
+                N_all[:,i] = st.select(channel="??N")[i].data
+                E_all[:,i] = st.select(channel="??E")[i].data
+            except IndexError:
+                # And write if uses 1 and 2 labels rather than N and E:
+                N_all[:,i] = st.select(channel="??1")[i].data
+                E_all[:,i] = st.select(channel="??2")[i].data            
+
+        # And create stacked data stream:
+        composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
+
+        # And decimate data back down to original sampling rate:
+        st.decimate(10, no_filter=True)
+        composite_st.decimate(10, no_filter=True)
+
         # And save data:
         st.write(st_out_fname, format="MSEED")
+        composite_st_out_fname = st_out_fname.split('.')[0] + "_composite.m"
+        composite_st.write(composite_st_out_fname, format="MSEED")
+
+        # And tidy:
+        del st
+        gc.collect()
 
 
 
