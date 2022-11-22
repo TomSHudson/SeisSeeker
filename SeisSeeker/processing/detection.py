@@ -1069,14 +1069,11 @@ class setup_detection:
         print("Loaded detection instance from:", preload_fname)
 
     
-    def get_composite_array_st_from_bazi_slowness(self, st_out_fname, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10):
+    def get_composite_array_st_from_bazi_slowness(self, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10, st_out_fname='out.m', return_streams=False):
         """Function to find array stacked stream from back-azimuth and slowness. Returns average amplitude 
         time-series seismogram of stacked array data, for all three componets.
         Parameters
         ----------
-        st_out_fname : str
-            Filename of to save mseed data stream to.
-
         arrival_time : obspy UTCDateTime object
             Arrival time at array. Will output window around this time, as defined by 
             <t_before_s> and <t_after_s>.
@@ -1093,7 +1090,13 @@ class setup_detection:
 
         t_after_s : float
             Time, in seconds, after arrival time to include in window. Optional. Default 
-            is 10 s.     
+            is 10 s.   
+        
+        st_out_fname : str
+            Filename of to save mseed data stream to. Optional. Default is out.m.
+
+        return_streams : bool
+            If True, returns st and composite_st. Optional. Default = False.  
         """
         # Load in raw mseed data:
         st = self._load_day_of_data(arrival_time.year, arrival_time.julday, hour=arrival_time.hour)
@@ -1105,6 +1108,11 @@ class setup_detection:
 
         # Find and perform time shifts for all receivers:
         # Get array centre coords (in km):
+        # _setup_array_receiver_coords
+        try:
+            self.stations_df['x_array_coords_km'].values
+        except KeyError:
+            self._setup_array_receiver_coords()
         xx = self.stations_df['x_array_coords_km'].values
         yy = self.stations_df['y_array_coords_km'].values
         x_arr_cent = np.mean(xx)
@@ -1163,13 +1171,16 @@ class setup_detection:
         composite_st.decimate(10, no_filter=True)
 
         # And save data:
-        st.write(st_out_fname, format="MSEED")
-        composite_st_out_fname = st_out_fname.split('.')[0] + "_composite.m"
-        composite_st.write(composite_st_out_fname, format="MSEED")
+        if st_out_fname:
+            st.write(st_out_fname, format="MSEED")
+            composite_st_out_fname = st_out_fname.split('.')[0] + "_composite.m"
+            composite_st.write(composite_st_out_fname, format="MSEED")
 
-        # And tidy:
-        del st
-        gc.collect()
+        if return_streams:
+            return st, composite_st
+        else:
+            del st, composite_st
+            gc.collect()
 
 
 
