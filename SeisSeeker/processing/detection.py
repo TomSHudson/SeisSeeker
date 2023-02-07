@@ -38,7 +38,7 @@ def flatten_list(l):
 @jit(nopython=True, parallel=True)#, nogil=True)
 def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
     """Function to perform array processing fast due to being designed to 
-    be wrapped using Numba.
+    be wrapped using Numba. Function inspired by Bowden et al. (2021).
     Returns:
     Pfreq_all
     """
@@ -93,7 +93,7 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             target_f = target_freqs[ii]
             curr_f_idx = (np.abs(xf - target_f)).argmin()
 
-            # Construct a matrix of each station-station correlation *before* any phase shifts
+            # Construct a matrix of each station-station correlation before any phase shifts
             Rxx=np.zeros((n_stations,n_stations),dtype=np.complex128)
             for i1 in range(0,n_stations):
                 for i2 in range(0,n_stations):
