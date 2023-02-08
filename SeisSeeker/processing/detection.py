@@ -398,6 +398,8 @@ class setup_detection:
 
     channels_to_use : list of strs (optional, default = ["??Z"])
         List of channels to use for the processing (e.g. HHZ, ??Z or similar).
+        Note: Currently must be in form: ["??Z"] or ["??Z", "??N", "??E"] 
+        or ["??Z", "??1", "??2"]. 
 
     Attributes
     ----------
@@ -521,6 +523,7 @@ class setup_detection:
         self.bazi_tol = 20.
         self.max_phase_sep_s = 2.5
         self.filt_phase_assoc_by_max_power = True
+        self.calc_uncertainties = False 
         # For location:
         self.receiver_vp = None
         self.receiver_vs = None
@@ -658,6 +661,8 @@ class setup_detection:
     def _find_time_series(self, Psum_all):
         """Function to calculate beamforming time-series outputs, given 
         a raw beamforming result.
+        Note that the time-series timestamps are in the middle of the time-
+        wimdows.
         Psum_all - Sum of Pxx for each time window, and for all slownesses.
                     Shape is n_win x slowness WE x slowness SN
         Returns time-series of coherency (power), slowness and back-azimuth.
@@ -692,6 +697,42 @@ class setup_detection:
                 back_azis[i] += 360
             
         return t_series, powers, slownesses, back_azis
+
+    
+    def _beamforming(self, st_trimmed):
+        """Function to perform beamforming, given a stream of data for a specific 
+        time-window. Function is primarily called by run_array_proc().
+        Returns <Psum_all> (stacked 2D power-slowness space data)."""
+        # Run heavy array processing algorithm:
+        # Specify various variables needed:
+        # Make a linear spacing of frequencies. One might use periods, logspacing, etc.:
+        # (Note: linspace much less noisy than logspace)
+        target_freqs = np.linspace(self.freqmin,self.freqmax,self.num_freqs) #np.logspace(self.freqmin,self.freqmax,self.num_freqs) 
+        data = self._convert_st_to_np_data(st_trimmed)
+        # Station locations:
+        xx = self.stations_df['x_array_coords_km'].values
+        yy = self.stations_df['y_array_coords_km'].values
+        # And run:
+        tic = time.time()
+        print("Performing run for",data.shape[0],"windows")
+        Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
+                                                        self.n_stations, self.n_t_samp, self.remove_autocorr)
+        toc = time.time()
+        print(toc-tic)
+        # And tidy:
+        del data 
+        gc.collect()
+
+        # And remove any data where stations don't exist:
+        Pfreq_all = np.nan_to_num(Pfreq_all, copy=False, nan=0.0)
+
+        # Stack (and normalise) data:
+        Psum_all = self._stack_results(Pfreq_all)
+        del Pfreq_all
+        gc.collect()
+
+        return Psum_all
+
     
     def run_array_proc(self):
         """Function to run core array processing.
@@ -763,38 +804,10 @@ class setup_detection:
                             else:
                                 st_trimmed.trim(starttime=self.starttime, endtime=self.endtime)
 
-                            # Convert data to np:
-                            data = self._convert_st_to_np_data(st_trimmed)
+                            # Run array processing:
+                            # (to get power in slowness space)
+                            Psum_all = self._beamforming(st_trimmed)
                             del st_trimmed 
-                            gc.collect()
-
-                            # Run heavy array processing algorithm:
-                            # Specify various variables needed:
-                            # Make a linear spacing of frequencies. One might use periods, logspacing, etc.:
-                            # (Note: linspace much less noisy than logspace)
-                            target_freqs = np.linspace(self.freqmin,self.freqmax,self.num_freqs) #np.logspace(self.freqmin,self.freqmax,self.num_freqs) 
-                            # Station locations:
-                            xx = self.stations_df['x_array_coords_km'].values
-                            yy = self.stations_df['y_array_coords_km'].values
-                            # And run:
-                            tic = time.time()
-                            print("Performing run for",data.shape[0],"windows")
-                            Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
-                                                                            self.n_stations, self.n_t_samp, self.remove_autocorr)
-                            toc = time.time()
-                            print(toc-tic)
-                            # And tidy:
-                            del data 
-                            gc.collect()
-
-                            # And remove any data where stations don't exist:
-                            # for i in np.arange(len(Pfreq_all)):
-                                # Pfreq_all[i] = np.nan_to_num(Pfreq_all[i], copy=False, nan=0.0)
-                            Pfreq_all = np.nan_to_num(Pfreq_all, copy=False, nan=0.0)
-
-                            # Sum/stack/normallise data:
-                            Psum_all = self._stack_results(Pfreq_all)
-                            del Pfreq_all
                             gc.collect()
 
                             # Calculate time-series outputs (for detection) from data:
@@ -835,6 +848,85 @@ class setup_detection:
         # Calculate median and mad values:
         mad = np.median(np.abs(x - np.median(x)))
         return scale * mad
+
+    
+    def _calc_uncertainties(self, events_df, t_series_df_Z, t_series_df_hor, verbosity=0):
+        """Function to calculate uncertainties for phase-associated event detections.
+        Calculates uncertainty in t1, t2, slow1, slow2 and bazi1 and bazi2, 
+        assuming Gaussian uncertainties. Uncertainties are defined as the full-width half 
+        maximum (used due to more efficient optimisation than Gaussian fitting, but potentially 
+        over-estimates error)."""
+        # Do preliminary prep. once:
+        # Define temparory datastore:
+        uncertainties_df = pd.DataFrame({'t1_err': [], 't2_err': [], 'slow1_err': [], 'slow2_err': [],
+                                            'bazi1_err': [], 'bazi2_err': []})
+        # Find max. timeshift (for determining beamforming window):
+        max_t_shift = self.max_sl * ( np.max(np.abs((self.stations_df['x_array_coords_km'].values))) 
+                            + np.max(np.abs((self.stations_df['x_array_coords_km'].values))) ) # (effectively d/v)
+        n_wins_for_max_t_shift = int(np.ceil(max_t_shift / self.win_len_s)) + 1 #(+1 just to ensure that window is definitely wide enough)
+
+        # And loop over detected events, calculating uncertainty:
+        for index, row in events_df.iterrows():
+            # Find arrival-time uncertainties:
+            # ------- For vertical -------:
+            # Time uncertainty:
+            # Find FWHM for t1 pick:
+            # (only use ascending currently (assume symetric pdf))
+            t1_pick_idx = t_series_df_Z.index[t_series_df_Z['t'] == row['t1']][0]
+            Pxx_curr = t_series_df_Z.iloc[t1_pick_idx]['power'] 
+            idx_diff = 0
+            while Pxx_curr > t_series_df_Z.iloc[t1_pick_idx]['power'] / 2.:
+                idx_diff+=1
+                Pxx_curr = t_series_df_Z.iloc[t1_pick_idx+idx_diff]['power'] 
+            t1_err = obspy.UTCDateTime(t_series_df_Z.iloc[t1_pick_idx+idx_diff]['t']) - obspy.UTCDateTime(t_series_df_Z.iloc[t1_pick_idx]['t'])
+            
+            # Spatial uncertainty:
+            # (slowness, bazi)
+            # Perform beamforming again around event, to estimate bazi and slowness errs:
+            # Get data:
+            event_phase_arr_time = obspy.UTCDateTime(row['t1'])
+            st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)
+            st_trimmed = st.copy()
+            # st_trimmed.trim(starttime=event_phase_arr_time, endtime=event_phase_arr_time+self.win_len_s)
+            st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
+                                endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
+            # Run array processing:
+            # (to get power in slowness space)
+            # (Note that need to run for a number of windows, to allow for adequate shifting of data)
+            self.channel_curr = self.channels_to_use[0] # Do for vertical first
+            Psum_all = self._beamforming(st_trimmed)
+            del st_trimmed 
+            gc.collect()
+            # Find highest power slowness space for event:
+            t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
+            max_idx = np.argmax(powers)
+            Psum_opt = np.abs(Psum_all[max_idx,:,:])
+            # Define slowness space:
+            ux_grid, uy_grid = np.meshgrid(np.linspace(-self.max_sl,self.max_sl,Psum_opt.shape[0]), 
+                                    np.linspace(-self.max_sl,self.max_sl,Psum_opt.shape[1]))
+            plt.figure()
+            plt.pcolormesh(ux_grid, uy_grid, Psum_opt, cmap="inferno")
+            plt.show()
+
+            print("**", max_idx, powers[max_idx], slownesses[max_idx], back_azis[max_idx])
+            print("***", row)
+
+
+            # And find FWHM for t2 pick:
+            # (only use ascending currently (assume symetric pdf))
+            t2_pick_idx = t_series_df_hor.index[t_series_df_hor['t'] == row['t2']][0]
+            Pxx_curr = t_series_df_hor.iloc[t2_pick_idx]['power'] 
+            idx_diff = 0
+            while Pxx_curr > t_series_df_hor.iloc[t2_pick_idx]['power'] / 2.:
+                idx_diff+=1
+                Pxx_curr = t_series_df_hor.iloc[t2_pick_idx+idx_diff]['power'] 
+            t2_err = obspy.UTCDateTime(t_series_df_hor.iloc[t2_pick_idx+idx_diff]['t']) - obspy.UTCDateTime(t_series_df_hor.iloc[t2_pick_idx]['t'])
+
+
+
+
+        
+        return events_df
     
     
     def detect_events(self, verbosity=0):
@@ -910,6 +1002,10 @@ class setup_detection:
             events_df = _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, 
                                                 self.bazi_tol, self.filt_phase_assoc_by_max_power, self.max_phase_sep_s, self.min_event_sep_s, verbosity=verbosity)
 
+            # Find uncertainties (in time, bazi, slowness):
+            if self.calc_uncertainties:
+                events_df = self._calc_uncertainties(events_df, t_series_df_Z, t_series_df_hor, verbosity=verbosity)
+
             # Append to datastore:
             events_df_all = events_df_all.append(events_df)
 
@@ -919,7 +1015,7 @@ class setup_detection:
                 print("Event phase associations:")            
                 print(events_df)
                 print("="*40)
-                plt.figure(figsize=(8,6))
+                plt.figure(figsize=(6,4))
                 plt.plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
                 plt.plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
                 plt.scatter(events_df['t1'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
