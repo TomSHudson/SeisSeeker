@@ -919,7 +919,7 @@ class setup_detection:
             # (to get power in polar slowness space)
             # (Note that need to run for a number of windows, to allow for adequate shifting of data)
             self.channel_curr = self.channels_to_use[0] # Do for vertical first
-            Psum_all = self._beamforming(st_trimmed)
+            Psum_all = self._beamforming(st_trimmed, verbosity=verbosity)
             del st_trimmed 
             gc.collect()
             # Find highest power slowness space for event:
@@ -983,9 +983,9 @@ class setup_detection:
             # (to get power in polar slowness space)
             # (Note that need to run for a number of windows, to allow for adequate shifting of data)
             self.channel_curr = self.channels_to_use[1] # Do for vertical first
-            Psum_all_N = self._beamforming(st_trimmed)
+            Psum_all_N = self._beamforming(st_trimmed, verbosity=verbosity)
             self.channel_curr = self.channels_to_use[2] # Do for vertical first
-            Psum_all_E = self._beamforming(st_trimmed)
+            Psum_all_E = self._beamforming(st_trimmed, verbosity=verbosity)
             del st_trimmed 
             gc.collect()
             Psum_all_NE = Psum_all_N + Psum_all_E
