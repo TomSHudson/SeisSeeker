@@ -728,12 +728,12 @@ class setup_detection:
         xx = self.stations_df['x_array_coords_km'].values
         yy = self.stations_df['y_array_coords_km'].values
         # And run:
-        if verbosity>0:
+        if verbosity>1:
             print("Performing run for",data.shape[0],"windows")
             tic = time.time()
         Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
                                                         self.n_stations, self.n_t_samp, self.remove_autocorr)
-        if verbosity>0:
+        if verbosity>1:
             toc = time.time()
             print(toc-tic)
         # And tidy:
@@ -880,11 +880,14 @@ class setup_detection:
         # Find max. timeshift (for determining beamforming window):
         max_t_shift = self.max_sl * ( np.max(np.abs((self.stations_df['x_array_coords_km'].values))) 
                             + np.max(np.abs((self.stations_df['x_array_coords_km'].values))) ) # (effectively d/v)
-        n_wins_for_max_t_shift = int(np.ceil(max_t_shift / self.win_len_s)) + 1 #(+1 just to ensure that window is definitely wide enough)
+        n_wins_for_max_t_shift = int(np.ceil(max_t_shift / self.win_len_s)) #+ 1 #(+1 just to ensure that window is definitely wide enough)
 
         # And loop over detected events, calculating uncertainty:
         count = 0
         for index, row in events_df.iterrows():
+            if count % 10 == 0:
+                if verbosity > 0:
+                    print("Calculating uncertainty for event", count+1, "/", len(events_df))
             # Load in data (if needed):
             # (done like this to avoid unnneccessary read ins, improving eff.)
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
@@ -935,7 +938,10 @@ class setup_detection:
             idx_diff = 0
             while Pxx_curr > Psum_opt[slow_idx_peak, bazi_idx_peak] / 2.:
                 idx_diff+=1
-                Pxx_curr = Psum_opt[slow_idx_peak+idx_diff, bazi_idx_peak]
+                if slow_idx_peak+idx_diff < Psum_opt.shape[0]:
+                    Pxx_curr = Psum_opt[slow_idx_peak+idx_diff, bazi_idx_peak]
+                else:
+                    Pxx_curr = 0 # Force exit if reach slowness limits
             dslow = self.max_sl / Psum_opt.shape[0] # Assumes linear slowness space
             slow1_err = idx_diff * dslow
             # Back-azimuth:
@@ -1002,7 +1008,10 @@ class setup_detection:
             idx_diff = 0
             while Pxx_curr > Psum_opt[slow_idx_peak, bazi_idx_peak] / 2.:
                 idx_diff+=1
-                Pxx_curr = Psum_opt[slow_idx_peak+idx_diff, bazi_idx_peak]
+                if slow_idx_peak+idx_diff < Psum_opt.shape[0]:
+                    Pxx_curr = Psum_opt[slow_idx_peak+idx_diff, bazi_idx_peak]
+                else:
+                    Pxx_curr = 0 # Force exit if reach slowness limits
             dslow = self.max_sl / Psum_opt.shape[0] # Assumes linear slowness space
             slow2_err = idx_diff * dslow
             # Back-azimuth:
@@ -1044,6 +1053,8 @@ class setup_detection:
             # plt.show()
 
         # And add uncertainties to events_df:
+        events_df = events_df.reset_index(drop=True)
+        uncertainties_df = uncertainties_df.reset_index(drop=True)
         events_df = pd.concat([events_df, uncertainties_df], axis=1)
 
         return events_df
