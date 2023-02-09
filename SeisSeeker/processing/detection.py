@@ -278,47 +278,25 @@ def _submit_parallel_fast_freq_domain_array_proc(procnum, return_dict_Pfreq_all,
     return_dict_Pfreq_all[procnum] = Pfreq_all_curr_run
 
 
-def _calc_time_shift_from_array_cent(slow, bazi, x_arr_cent, y_arr_cent, x_rec, y_rec):
+def _calc_time_shift_from_array_cent(slow, bazi, x_rec, y_rec):
     """Calculates time shift of signal at receiver from array centre for stacking data.
     Note: All distances and velocities use km unless otherwise specified.
     
     Parameters
     ----------
     slow : float
-        Slowness of arrival, in s/km.
-    
+        Slowness of arrival, in s/km.  
     bazi : float
         Back azimuth of arrival in degrees from .
-
-    x_arr_cent : float
-        Location of centre of array in km East.
-
-    y_arr_cent : float
-        Location of centre of array in km North.
-
     x_rec :
         Location of receiver in km East.
-
     y_rec
         Location of receiver in km North.
     """
-    # Calculate time shift:
-    # (formulated on 16th Nov 2022)
-    # Calculate angle from array centre to current receiver:
-    x0 = x_arr_cent
-    y0 = y_arr_cent
-    x1 = x_rec
-    y1 = y_rec
-    station_to_array_centre_angle_from_N = (np.pi/2) -  np.arctan2((y1-y0) , (x1-x0)) 
-    if station_to_array_centre_angle_from_N < 0:
-        station_to_array_centre_angle_from_N += 2*np.pi
-    # And calculate relative apparent velocity for current receiver:
-    rel_vel_curr = -1 * (1. / slow) * np.cos(station_to_array_centre_angle_from_N - np.deg2rad(bazi)) # (Note: minus convention for arrival at receivers of similar back-azimuths to ray arrive first).
-    # Calculate distance from centre to receiver:
-    rec_dist_curr = np.sqrt( (x1-x0)**2 + (y1-y0)**2 )
-    # And calculate time shift:
-    time_shift_curr = rec_dist_curr / rel_vel_curr # t = d/v
-
+    # Calculate time-shift for receiver:
+    # (in polar coord system, for consistency)
+    bazi_rad = np.deg2rad(bazi)
+    time_shift_curr = x_rec*slow*np.sin(bazi_rad) + y_rec*slow*np.cos(bazi_rad) # (distance x slowness = distance / velocity = time)
     return time_shift_curr
 
 
@@ -1334,20 +1312,10 @@ class setup_detection:
         st.interpolate(sampling_rate=10*st[0].stats.sampling_rate)
 
         # Find and perform time shifts for all receivers:
-        # Get array centre coords (in km):
-        # _setup_array_receiver_coords
-        # try:
-        #     self.stations_df['x_array_coords_km'].values
-        # except KeyError:
-        #     self._setup_array_receiver_coords()
-        xx = self.stations_df['x_array_coords_km'].values
-        yy = self.stations_df['y_array_coords_km'].values
-        x_arr_cent = np.mean(xx)
-        y_arr_cent = np.mean(yy)
         # Loop over stations:
         for i in range(len(st)):
             # Find time shift:
-            # Get current station location:
+            # Get current station location (relative to array centre):
             curr_station = st[i].stats.station
             x_rec = self.stations_df.loc[self.stations_df['Name'] == curr_station]['x_array_coords_km'].values[0]
             y_rec = self.stations_df.loc[self.stations_df['Name'] == curr_station]['y_array_coords_km'].values[0]
@@ -1360,7 +1328,7 @@ class setup_detection:
                 bazi = bazis_1_2[1]
                 slow = slows_1_2[1]
             # Calculate arrival time shift relative to centre of array:
-            time_shift_curr_s = _calc_time_shift_from_array_cent(slow, bazi, x_arr_cent, y_arr_cent, x_rec, y_rec)
+            time_shift_curr_s = _calc_time_shift_from_array_cent(slow, bazi, x_rec, y_rec)
             
             # And perform time shift on data:
             n_samp_to_shift = round(time_shift_curr_s * st[i].stats.sampling_rate)
