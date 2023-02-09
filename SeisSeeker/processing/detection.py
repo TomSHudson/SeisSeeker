@@ -517,6 +517,7 @@ class setup_detection:
 
         # Setup station information:
         self.stations_df = pd.read_csv(self.stations_fname)
+        self._setup_array_receiver_coords()
 
         # And define attributes:
         # For array processing:
@@ -754,7 +755,7 @@ class setup_detection:
         for each frequency, over a range of specified slownesses.
         Function inspured by work of D. Bowden (see Bowden et al. (2020))."""
         # Prep. stations df:
-        self._setup_array_receiver_coords()
+        #self._setup_array_receiver_coords()
 
         # Loop over years:
         for year in range(self.starttime.year, self.endtime.year+1):
@@ -880,15 +881,13 @@ class setup_detection:
         n_wins_for_max_t_shift = int(np.ceil(max_t_shift / self.win_len_s)) + 1 #(+1 just to ensure that window is definitely wide enough)
 
         # And loop over detected events, calculating uncertainty:
+        count = 0
         for index, row in events_df.iterrows():
             # Load in data (if needed):
             # (done like this to avoid unnneccessary read ins, improving eff.)
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
-            if index == 0:
+            if count == 0:
                 st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)
-            else:
-                if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                    st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)
 
             # Find uncertainties:
             # ------- For vertical -------:
@@ -908,6 +907,9 @@ class setup_detection:
             # Perform beamforming again around event, to estimate bazi and slowness errs:
             # Get data:
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
+            # Reload data if needed:
+            if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
+                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)   
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -971,7 +973,7 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t2'])
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                    st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)            
+                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)            
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1024,6 +1026,9 @@ class setup_detection:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
             uncertainties_df = pd.concat([uncertainties_df, uncertainties_df_curr], ignore_index=True)
+
+            # And update count:
+            count+=1
 
             # fig = plt.figure()
             # ax = Axes3D(fig)
@@ -1318,10 +1323,10 @@ class setup_detection:
         # Find and perform time shifts for all receivers:
         # Get array centre coords (in km):
         # _setup_array_receiver_coords
-        try:
-            self.stations_df['x_array_coords_km'].values
-        except KeyError:
-            self._setup_array_receiver_coords()
+        # try:
+        #     self.stations_df['x_array_coords_km'].values
+        # except KeyError:
+        #     self._setup_array_receiver_coords()
         xx = self.stations_df['x_array_coords_km'].values
         yy = self.stations_df['y_array_coords_km'].values
         x_arr_cent = np.mean(xx)
