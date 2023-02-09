@@ -941,6 +941,21 @@ class setup_detection:
             bazi1_err = idx_diff * dbazi
             # ------- End vertical -------
 
+            # Plot slowness space that used for uncertainty, if specified:
+            if verbosity > 1:
+                fig = plt.figure()
+                Axes3D(fig)
+                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
+                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
+                th, r = np.meshgrid(azm, rad)
+                ax = plt.subplot(projection="polar")
+                ax.set_theta_offset(np.pi/2)
+                ax.set_theta_direction(-1)
+                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
+                plt.colorbar(im)
+                plt.grid()
+                plt.show()
+
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
             # (only use ascending currently (assume symetric pdf))
@@ -1010,6 +1025,21 @@ class setup_detection:
             dbazi = 360. / Psum_opt.shape[1]
             bazi2_err = idx_diff * dbazi
             # ------- End horizontal -------
+            
+            # Plot slowness space that used for uncertainty, if specified:
+            if verbosity > 1:
+                fig = plt.figure()
+                Axes3D(fig)
+                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
+                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
+                th, r = np.meshgrid(azm, rad)
+                ax = plt.subplot(projection="polar")
+                ax.set_theta_offset(np.pi/2)
+                ax.set_theta_direction(-1)
+                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
+                plt.colorbar(im)
+                plt.grid()
+                plt.show()
 
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
@@ -1018,17 +1048,6 @@ class setup_detection:
 
             # And update count:
             count+=1
-
-            # fig = plt.figure()
-            # ax = Axes3D(fig)
-            # rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
-            # azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
-            # th, r = np.meshgrid(azm, rad)
-            # print(Psum_opt.shape, r.shape, th.shape)
-            # plt.subplot(projection="polar")
-            # plt.pcolormesh(th, r, Psum_opt, cmap='inferno')
-            # plt.grid()
-            # plt.show()
 
         # And add uncertainties to events_df:
         events_df = events_df.reset_index(drop=True)
