@@ -714,7 +714,7 @@ class setup_detection:
         return t_series, powers, slownesses, back_azis
 
 
-    def _beamforming(self, st_trimmed):
+    def _beamforming(self, st_trimmed, verbosity=0):
         """Function to perform beamforming, given a stream of data for a specific 
         time-window. Function is primarily called by run_array_proc().
         Returns <Psum_all> (stacked 2D power-slowness space data)."""
@@ -728,12 +728,14 @@ class setup_detection:
         xx = self.stations_df['x_array_coords_km'].values
         yy = self.stations_df['y_array_coords_km'].values
         # And run:
-        tic = time.time()
-        print("Performing run for",data.shape[0],"windows")
+        if verbosity>0:
+            print("Performing run for",data.shape[0],"windows")
+            tic = time.time()
         Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
                                                         self.n_stations, self.n_t_samp, self.remove_autocorr)
-        toc = time.time()
-        print(toc-tic)
+        if verbosity>0:
+            toc = time.time()
+            print(toc-tic)
         # And tidy:
         del data 
         gc.collect()
