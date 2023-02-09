@@ -13,6 +13,7 @@ import pandas as pd
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt 
+from mpl_toolkits.mplot3d import Axes3D
 import os, sys
 import obspy
 from scipy.signal import find_peaks
@@ -35,40 +36,52 @@ def flatten_list(l):
     return [item for sublist in l for item in sublist]
 
 
+def xy_to_rtheta(x,y):
+    """x,y to r,theta, where x,y in East and North directions.
+    Theta is in degrees from N."""
+    r = np.sqrt(x**2 + y**2)
+    theta = np.rad2deg(np.arctan2(x,y))
+    try:
+        theta[theta<0] = theta[theta<0] + 360
+    except TypeError:
+        theta = theta + 360
+    return r, theta 
+
+
 @jit(nopython=True, parallel=True)#, nogil=True)
 def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
     """Function to perform array processing fast due to being designed to 
     be wrapped using Numba. Function inspired by Bowden et al. (2021).
+    Performs array processing in polar coordinates.
     Returns:
     Pfreq_all
     """
     # Define grid of slownesses:
     # number of pixes in x and y
     # (Determines number of phase shifts to perform)
-    nux = 51 #101
-    nuy = 51 #101
-    ux = np.linspace(-max_sl,max_sl,nux)
-    uy = np.linspace(-max_sl,max_sl,nuy)
-    dux=ux[1]-ux[0]
-    duy=uy[1]-uy[0]
+    n_ur = 26 #51 #101
+    n_utheta = 120 #51 #101
+    ur = np.linspace(0,max_sl,n_ur)
+    utheta = np.linspace(0,360-(360/n_utheta),n_utheta)
+    utheta_rad = np.deg2rad(utheta)
+    dur=ur[1]-ur[0]
+    dutheta=utheta[1]-utheta[0]
 
     # To speed things up, we precompute a library of time shifts,
     #  so we don't have to do it for each loop of frequency:
-    tlib = np.zeros((n_stations,nux,nuy), dtype=np.complex128)#, dtype=np.float64)
-    for ix in range(0,nux):
-            for iy in range(0,nuy):
-                tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy]
-    # In this case, we assume station locations xx and yy are already relative to some convenient midpoint
-    # Rather than shift one station to a single other station, we'll shift *all* stations back to that midpoint
+    tlib = np.zeros((n_stations,n_ur,n_utheta), dtype=np.complex128)#, dtype=np.float64)
+    for ir in range(0,n_ur):
+            for itheta in range(0,n_utheta):
+                # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
+                # tlib[:,ir,itheta] = (r_rec*np.sin(theta_rec_rad) * ur[ir]*np.sin((utheta_rad[itheta])) ) + (r_rec*np.cos(theta_rec_rad) * ur[ir]*np.cos((utheta_rad[itheta])) )# (distance x slowness = distance / velocity = time)
+                tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
+    # Since receivers are relative to the array centre, can shift all receivers back to that centre.
 
     # Create data stores:
-    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),nux,nuy), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
+    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_ur,n_utheta), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
 
     # Then loop over windows:
     for win_idx in prange(data.shape[0]):
-        # if(win_idx % 10 == 0):
-        #     print("Processing for window", win_idx+1, "/", data.shape[0])
-        
         # Calculate spectra:
         # Construct data structure:
         nfft = (2.0**np.ceil(np.log2(n_t_samp)))
@@ -86,7 +99,7 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             Pxx_all[:,sta_idx] = Pxx_curr
 
         # Loop over all freqs, performing phase shifts:
-        Pfreq=np.zeros((len(target_freqs),nux,nuy),dtype=np.complex128)
+        Pfreq=np.zeros((len(target_freqs),n_ur,n_utheta),dtype=np.complex128)
         counter_grid = 0
         for ii in range(len(target_freqs)):
             # Find closest current freq.:
@@ -105,16 +118,16 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
                             Rxx[i1,i2] = 0
 
             # And loop over phase shifts, calculating cross-correlation power:
-            for ix in range(0,nux):
-                for iy in range(0,nuy):
-                    timeshifts = tlib[:,ix,iy] # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
+            for ir in range(0,n_ur):
+                for itheta in range(0,n_utheta):
+                    timeshifts = tlib[:,ir,itheta] # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
                     a = np.exp(-1j*2*np.pi*target_f*timeshifts)
                     aconj = np.conj(a)
                     # "a" is a "steering vector." It contains info on all the phase delays needed to 
                     #  push our stations to the middle point.
                     # Since each element of Rxx contains cross-spectra of two stations, we need two timeshifts
                     #  to push both to the centerpoint. This can also be seen as projecting Rxx onto a new basis.
-                    Pfreq[ii,ix,iy]=np.dot(np.dot(aconj,Rxx),a)     
+                    Pfreq[ii,ir,itheta]=np.dot(np.dot(aconj,Rxx),a)     
 
         # And remove any data where stations don't exist:
         ###np.nan_to_num(Pfreq, copy=False, nan=0.0) # NOT SUPPORTED BY NUMBA SO DO OUTSIDE NUMBA
@@ -560,6 +573,10 @@ class setup_detection:
         self.stations_df['x_array_coords_km'] = self.stations_df['x (km)'].values - array_centre[0]
         self.stations_df['y_array_coords_km'] = self.stations_df['y (km)'].values - array_centre[1]
         self.stations_df['z_array_coords_km'] = self.stations_df['z (km)'].values - array_centre[2]
+        # And in polar coords from N:
+        self.stations_df['r_array_coords_km'], self.stations_df['theta_array_coords_deg'] = xy_to_rtheta(self.stations_df['x_array_coords_km'], 
+                                                                                                            self.stations_df['y_array_coords_km']) 
+
 
 
     def find_min_max_array_sensitivity(self, vel_assumed=3.0):
@@ -658,6 +675,7 @@ class setup_detection:
                 Psum_all[i,:,:] = np.sum(Pfreq_all[i,:,:,:],axis=0)
         return Psum_all
 
+
     def _find_time_series(self, Psum_all):
         """Function to calculate beamforming time-series outputs, given 
         a raw beamforming result.
@@ -668,10 +686,10 @@ class setup_detection:
         Returns time-series of coherency (power), slowness and back-azimuth.
         """
         # Calcualte ux, uy:
-        ux = np.linspace(-self.max_sl,self.max_sl,Psum_all.shape[1])
-        uy = np.linspace(-self.max_sl,self.max_sl,Psum_all.shape[2])
-        dux=ux[1]-ux[0]
-        duy=uy[1]-uy[0]
+        ur = np.linspace(0, self.max_sl,Psum_all.shape[1])
+        utheta = utheta = np.linspace(0,360-(360/Psum_all.shape[2]),Psum_all.shape[2])
+        dur=ur[1]-ur[0]
+        dutheta=utheta[1]-utheta[0]
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
         t_series = np.arange(self.win_len_s/2,(n_win_curr*self.win_len_s) + (self.win_len_s/2), self.win_len_s)
@@ -686,19 +704,15 @@ class setup_detection:
             # Calculate max. power:
             powers[i] = np.max(np.abs(Psum_all[i,:,:]))
             # Calculate slowness:
-            x_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[0][0]
-            y_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[1][0]
-            x_sl = ux[x_idx] - dux/2
-            y_sl = uy[y_idx] - duy/2
-            slownesses[i] = np.sqrt(x_sl**2 + y_sl**2)
+            r_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[0][0]
+            theta_idx = np.where(Psum_all[i,:,:] == Psum_all[i,:,:].max())[1][0]
+            slownesses[i] = ur[r_idx]
             # And calculate back-azimuth:
-            back_azis[i] = np.rad2deg( np.arctan2( x_sl, y_sl ) )
-            if back_azis[i] < 0:
-                back_azis[i] += 360
+            back_azis[i] = utheta[theta_idx]
             
         return t_series, powers, slownesses, back_azis
 
-    
+
     def _beamforming(self, st_trimmed):
         """Function to perform beamforming, given a stream of data for a specific 
         time-window. Function is primarily called by run_array_proc().
@@ -867,7 +881,16 @@ class setup_detection:
 
         # And loop over detected events, calculating uncertainty:
         for index, row in events_df.iterrows():
-            # Find arrival-time uncertainties:
+            # Load in data (if needed):
+            # (done like this to avoid unnneccessary read ins, improving eff.)
+            event_phase_arr_time = obspy.UTCDateTime(row['t1'])
+            if index == 0:
+                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)
+            else:
+                if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
+                    st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)
+
+            # Find uncertainties:
             # ------- For vertical -------:
             # Time uncertainty:
             # Find FWHM for t1 pick:
@@ -885,13 +908,11 @@ class setup_detection:
             # Perform beamforming again around event, to estimate bazi and slowness errs:
             # Get data:
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
-            st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)
             st_trimmed = st.copy()
-            # st_trimmed.trim(starttime=event_phase_arr_time, endtime=event_phase_arr_time+self.win_len_s)
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
             # Run array processing:
-            # (to get power in slowness space)
+            # (to get power in polar slowness space)
             # (Note that need to run for a number of windows, to allow for adequate shifting of data)
             self.channel_curr = self.channels_to_use[0] # Do for vertical first
             Psum_all = self._beamforming(st_trimmed)
@@ -901,17 +922,38 @@ class setup_detection:
             t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
             max_idx = np.argmax(powers)
             Psum_opt = np.abs(Psum_all[max_idx,:,:])
-            # Define slowness space:
-            ux_grid, uy_grid = np.meshgrid(np.linspace(-self.max_sl,self.max_sl,Psum_opt.shape[0]), 
-                                    np.linspace(-self.max_sl,self.max_sl,Psum_opt.shape[1]))
-            plt.figure()
-            plt.pcolormesh(ux_grid, uy_grid, Psum_opt, cmap="inferno")
-            plt.show()
+            # Find FWHM for slowness and bazi:
+            slow_idx_peak = np.where(Psum_opt==np.max(Psum_opt))[0][0]
+            bazi_idx_peak = np.where(Psum_opt==np.max(Psum_opt))[1][0]
+            # Slowness:
+            # (go radially outwards for slowness, assumes symetric or sharper gradient inwards)
+            Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak]
+            idx_diff = 0
+            while Pxx_curr > Psum_opt[slow_idx_peak, bazi_idx_peak] / 2.:
+                idx_diff+=1
+                Pxx_curr = Psum_opt[slow_idx_peak+idx_diff, bazi_idx_peak]
+            dslow = self.max_sl / Psum_opt.shape[0] # Assumes linear slowness space
+            slow1_err = idx_diff * dslow
+            # Back-azimuth:
+            # (go clockwise, assuming symetric)
+            Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak]
+            idx_diff = 0
+            while Pxx_curr > Psum_opt[slow_idx_peak, bazi_idx_peak] / 2.:
+                idx_diff+=1
+                if bazi_idx_peak+idx_diff < Psum_opt.shape[1]:
+                    Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak+idx_diff]
+                else:
+                    try:
+                        Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak+idx_diff-Psum_opt.shape[1]] # (loop beyond 360 degrees)
+                    except IndexError:
+                        # Deal with 360 degree error:
+                        Pxx_curr = 0 
+                        idx_diff = Psum_opt.shape[1]            
+            dbazi = 360 / Psum_opt.shape[1]
+            bazi1_err = idx_diff * dbazi
+            # ------- End vertical -------
 
-            print("**", max_idx, powers[max_idx], slownesses[max_idx], back_azis[max_idx])
-            print("***", row)
-
-
+            # ------- For horizontal -------:
             # And find FWHM for t2 pick:
             # (only use ascending currently (assume symetric pdf))
             t2_pick_idx = t_series_df_hor.index[t_series_df_hor['t'] == row['t2']][0]
@@ -922,10 +964,81 @@ class setup_detection:
                 Pxx_curr = t_series_df_hor.iloc[t2_pick_idx+idx_diff]['power'] 
             t2_err = obspy.UTCDateTime(t_series_df_hor.iloc[t2_pick_idx+idx_diff]['t']) - obspy.UTCDateTime(t_series_df_hor.iloc[t2_pick_idx]['t'])
 
+            # Spatial uncertainty:
+            # (slowness, bazi)
+            # Perform beamforming again around event, to estimate bazi and slowness errs:
+            # Get data:
+            event_phase_arr_time = obspy.UTCDateTime(row['t2'])
+            # Reload data if needed:
+            if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
+                    st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)            
+            st_trimmed = st.copy()
+            st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
+                                endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
+            # Run array processing:
+            # (to get power in polar slowness space)
+            # (Note that need to run for a number of windows, to allow for adequate shifting of data)
+            self.channel_curr = self.channels_to_use[1] # Do for vertical first
+            Psum_all_N = self._beamforming(st_trimmed)
+            self.channel_curr = self.channels_to_use[2] # Do for vertical first
+            Psum_all_E = self._beamforming(st_trimmed)
+            del st_trimmed 
+            gc.collect()
+            Psum_all_NE = Psum_all_N + Psum_all_E
+            # Find highest power slowness space for event:
+            t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all_NE)
+            max_idx = np.argmax(powers)
+            Psum_opt = np.abs(Psum_all_NE[max_idx,:,:])
+            # Find FWHM for slowness and bazi:
+            slow_idx_peak = np.where(Psum_opt==np.max(Psum_opt))[0][0]
+            bazi_idx_peak = np.where(Psum_opt==np.max(Psum_opt))[1][0]
+            # Slowness:
+            # (go radially outwards for slowness, assumes symetric or sharper gradient inwards)
+            Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak]
+            idx_diff = 0
+            while Pxx_curr > Psum_opt[slow_idx_peak, bazi_idx_peak] / 2.:
+                idx_diff+=1
+                Pxx_curr = Psum_opt[slow_idx_peak+idx_diff, bazi_idx_peak]
+            dslow = self.max_sl / Psum_opt.shape[0] # Assumes linear slowness space
+            slow2_err = idx_diff * dslow
+            # Back-azimuth:
+            # (go clockwise, assuming symetric)
+            Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak]
+            idx_diff = 0
+            while Pxx_curr > Psum_opt[slow_idx_peak, bazi_idx_peak] / 2.:
+                idx_diff+=1
+                if bazi_idx_peak+idx_diff < Psum_opt.shape[1]:
+                    Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak+idx_diff]
+                else:
+                    try:
+                        Pxx_curr = Psum_opt[slow_idx_peak, bazi_idx_peak+idx_diff-Psum_opt.shape[1]] # (loop beyond 360 degrees)
+                    except IndexError:
+                        # Deal with 360 degree error:
+                        Pxx_curr = 0 
+                        idx_diff = Psum_opt.shape[1]
+            dbazi = 360. / Psum_opt.shape[1]
+            bazi2_err = idx_diff * dbazi
+            # ------- End horizontal -------
 
+            # And append data to overall uncertainties df:
+            uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
+                                                    'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
+            uncertainties_df = pd.concat([uncertainties_df, uncertainties_df_curr], ignore_index=True)
 
+            # fig = plt.figure()
+            # ax = Axes3D(fig)
+            # rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
+            # azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
+            # th, r = np.meshgrid(azm, rad)
+            # print(Psum_opt.shape, r.shape, th.shape)
+            # plt.subplot(projection="polar")
+            # plt.pcolormesh(th, r, Psum_opt, cmap='inferno')
+            # plt.grid()
+            # plt.show()
 
-        
+        # And add uncertainties to events_df:
+        events_df = pd.concat([events_df, uncertainties_df], axis=1)
+
         return events_df
     
     
