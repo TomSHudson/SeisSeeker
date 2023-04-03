@@ -67,13 +67,12 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
     dur=ur[1]-ur[0]
     dutheta=utheta[1]-utheta[0]
 
-    # To speed things up, we precompute a library of time shifts,
-    #  so we don't have to do it for each loop of frequency:
-    tlib = np.zeros((n_stations,n_ur,n_utheta), dtype=np.complex128)#, dtype=np.float64)
+    # Compute time-shifts once:
+    # (so that don't have to do it for every frequency)
+    tlib = np.zeros((n_stations,n_ur,n_utheta), dtype=np.complex128)
     for ir in range(0,n_ur):
             for itheta in range(0,n_utheta):
                 # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
-                # tlib[:,ir,itheta] = (r_rec*np.sin(theta_rec_rad) * ur[ir]*np.sin((utheta_rad[itheta])) ) + (r_rec*np.cos(theta_rec_rad) * ur[ir]*np.cos((utheta_rad[itheta])) )# (distance x slowness = distance / velocity = time)
                 tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
     # Since receivers are relative to the array centre, can shift all receivers back to that centre.
 
@@ -121,13 +120,10 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             for ir in range(0,n_ur):
                 for itheta in range(0,n_utheta):
                     timeshifts = tlib[:,ir,itheta] # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
-                    a = np.exp(-1j*2*np.pi*target_f*timeshifts)
+                    a = np.exp(-1j*2*np.pi*target_f*timeshifts) # (a is a steering vector, to allign all traces with array centre)
                     aconj = np.conj(a)
-                    # "a" is a "steering vector." It contains info on all the phase delays needed to 
-                    #  push our stations to the middle point.
-                    # Since each element of Rxx contains cross-spectra of two stations, we need two timeshifts
-                    #  to push both to the centerpoint. This can also be seen as projecting Rxx onto a new basis.
-                    Pfreq[ii,ir,itheta]=np.dot(np.dot(aconj,Rxx),a)     
+                    Pfreq[ii,ir,itheta]=np.dot(np.dot(aconj,Rxx),a) # Cross-correlation, with two timeshifts applied to push the two stations to the centre point. 
+                    # (This can also be seen as projecting Rxx onto a new basis.)
 
         # And remove any data where stations don't exist:
         ###np.nan_to_num(Pfreq, copy=False, nan=0.0) # NOT SUPPORTED BY NUMBA SO DO OUTSIDE NUMBA
