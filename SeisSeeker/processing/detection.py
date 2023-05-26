@@ -410,6 +410,13 @@ class setup_detection:
     win_len_s : float
         The window length for each frequency domain step. Units are seconds.
         Default value is 0.1 s.
+
+    win_step_inc_s : float
+        The step increment for each window step. Units are seconds. Note: set this value 
+        equal to <win_len_s> for no overlap of windows. overlap between windows is given 
+        by win_len_s - win_step_inc_s. For example, if win_step_inc_s = 3 x <win_len_s> 
+        then overlap will be 2 x <win_len_s>, etc. Greater overlap gives higher frequency 
+        resolution, but at computational cost. Default value is 0.1 s.
     
     remove_autocorr : bool
         If True, then will remove autocorrelations. Default is True.
@@ -500,6 +507,7 @@ class setup_detection:
         self.num_freqs = 100
         self.max_sl = 1.0
         self.win_len_s = 0.1
+        self.win_step_inc_s = 0.1 # (Note: Default is to step with no overlap)
         self.remove_autocorr = True
         self.norm_pre_stacking = False
         # self.nproc = 1
@@ -619,7 +627,7 @@ class setup_detection:
     
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
-        self.n_win = int((st[0].stats.endtime - st[0].stats.starttime) / self.win_len_s)
+        self.n_win = int(((st[0].stats.endtime - self.win_pad_s) - st[0].stats.starttime) / self.win_step_inc_s) # (Note: endtime - self.win_pad_s as pass extra padding via trimmed st)
         self.fs = st[0].stats.sampling_rate
         self.n_t_samp = int(self.win_len_s * self.fs) # num samples in time
         station_labels = self.stations_df['Name'].values
@@ -628,10 +636,15 @@ class setup_detection:
         for i in range(self.n_win):
             for j in range(self.n_stations):
                 station = station_labels[j]
-                win_start_idx = i * self.n_t_samp
-                win_end_idx = (i * self.n_t_samp) + self.n_t_samp
+                win_start_idx = i * int(self.win_step_inc_s * self.fs)
+                win_end_idx = (i * int(self.win_step_inc_s * self.fs)) + self.n_t_samp
                 try:
-                    data[i,j,:] = st.select(station=station, channel=self.channel_curr)[0].data[win_start_idx:win_end_idx]
+                    if win_end_idx < len(st.select(station=station, channel=self.channel_curr)[0].data):
+                        data[i,j,:] = st.select(station=station, channel=self.channel_curr)[0].data[win_start_idx:win_end_idx]
+                    else:
+                        # Zero pad data (as insufficient data passed for final window) and print warning:
+                        data[i,j,:] = 0.
+                        print("Warning: Zero-padding as not enough data to fill window overlap ( for win_len_s =", self.win_len_s, "and win_step_inc_s =", self.win_step_inc_s, ")")
                 except IndexError:
                     # Deal with if a particular station has no data for given window:
                     data[i,j,:] = 0.
@@ -667,7 +680,7 @@ class setup_detection:
         dutheta=utheta[1]-utheta[0]
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
-        t_series = np.arange(self.win_len_s/2,(n_win_curr*self.win_len_s) + (self.win_len_s/2), self.win_len_s)
+        t_series = np.arange(self.win_step_inc_s/2,(n_win_curr*self.win_step_inc_s) + (self.win_step_inc_s/2), self.win_step_inc_s)
         if len(t_series) > n_win_curr:
             t_series = t_series[0:n_win_curr]
         # And find power, slowness and back-azimuth:
@@ -790,10 +803,15 @@ class setup_detection:
                                 
                             # Trim data:
                             st_trimmed = st.copy()
-                            if self.endtime - self.starttime > 60:
-                                st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60)
+                            if self.win_len_s > self.win_step_inc_s:
+                                self.win_pad_s = self.win_len_s
                             else:
-                                st_trimmed.trim(starttime=self.starttime, endtime=self.endtime)
+                                self.win_pad_s = 0.
+                            if self.endtime - self.starttime > 60:
+                                st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), 
+                                                endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
+                            else:
+                                st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
 
                             # Run array processing:
                             # (to get power in slowness space)
@@ -854,7 +872,7 @@ class setup_detection:
         # Find max. timeshift (for determining beamforming window):
         max_t_shift = self.max_sl * ( np.max(np.abs((self.stations_df['x_array_coords_km'].values))) 
                             + np.max(np.abs((self.stations_df['x_array_coords_km'].values))) ) # (effectively d/v)
-        n_wins_for_max_t_shift = int(np.ceil(max_t_shift / self.win_len_s)) #+ 1 #(+1 just to ensure that window is definitely wide enough)
+        n_wins_for_max_t_shift = int(np.ceil(max_t_shift / self.win_step_inc_s)) #+ 1 #(+1 just to ensure that window is definitely wide enough)
 
         # And loop over detected events, calculating uncertainty:
         count = 0
@@ -1142,8 +1160,11 @@ class setup_detection:
                 plt.figure(figsize=(6,4))
                 plt.plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
                 plt.plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
-                plt.scatter(events_df['t1'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
-                plt.scatter(events_df['t2'], np.ones(len(events_df))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
+                if len(events_df_all) > 0:
+                    plt.scatter(events_df_all['t1'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
+                    plt.scatter(events_df_all['t2'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
+                else:
+                    print("No events to plot.")
                 plt.legend()
                 plt.xlabel("Time")
                 plt.ylabel("Power (arb. units)")
