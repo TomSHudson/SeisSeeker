@@ -55,37 +55,41 @@ def locate_events_from_P_and_S_array_arrivals(events_df, LUTs_dict, array_latlon
         tp_ts_res_pdf = 1 - (abs_min_arr / np.max(abs_min_arr))
 
         # 2. Use inclination angle from slowness (of P and/or S) to search from LUT for possible cells:
-        # To create PDF for location of cells vertically in LUT
-        # 2.i. For P:
-        # Calculate inclination angle:
-        # v = v_app * sin(inc_angle_from_vert) ?!
-        # Therefore, theta = arcsin( v / v_app ) ?!
-        v_app_P = 1. / row['slow1']
-        inc_angle_P = np.rad2deg(np.arcsin( v_app_P / receiver_vp ))
-        # And calculate inc. angle pdf:
-        abs_min_arr = np.abs(LUTs_dict['theta_grid_P'] - inc_angle_P)
-        P_inc_angle_res_pdf = 1 - (abs_min_arr / np.max(abs_min_arr))
-        # 2.ii. For S:
-        # Calculate inclination angle:
-        # v = v_app * sin(inc_angle_from_vert) ?!
-        # Therefore, theta = arcsin( v / v_app ) ?!
-        v_app_S = 1. / row['slow2']
-        inc_angle_S = np.rad2deg(np.arcsin( v_app_S / receiver_vs ))
-        # And calculate inc. angle pdf:
-        abs_min_arr = np.abs(LUTs_dict['theta_grid_S'] - inc_angle_S)
-        S_inc_angle_res_pdf = 1 - (abs_min_arr / np.max(abs_min_arr))
-        # 2.iii. Stack P and S inc. angle PDFs:
-        PS_stack_inc_angle_res_pdf = (P_inc_angle_res_pdf + S_inc_angle_res_pdf) / 2.
+        if row['slow1'] > 0 and row['slow2'] > 0:
+            # To create PDF for location of cells vertically in LUT
+            # 2.i. For P:
+            # Calculate inclination angle:
+            # v = v_app * sin(inc_angle_from_vert) ?!
+            # Therefore, theta = arcsin( v / v_app ) ?!
+            v_app_P = 1. / row['slow1']
+            inc_angle_P = np.rad2deg(np.arcsin( v_app_P / receiver_vp ))
+            # And calculate inc. angle pdf:
+            abs_min_arr = np.abs(LUTs_dict['theta_grid_P'] - inc_angle_P)
+            P_inc_angle_res_pdf = 1 - (abs_min_arr / np.max(abs_min_arr))
+            # 2.ii. For S:
+            # Calculate inclination angle:
+            # v = v_app * sin(inc_angle_from_vert) ?!
+            # Therefore, theta = arcsin( v / v_app ) ?!
+            v_app_S = 1. / row['slow2']
+            inc_angle_S = np.rad2deg(np.arcsin( v_app_S / receiver_vs ))
+            # And calculate inc. angle pdf:
+            abs_min_arr = np.abs(LUTs_dict['theta_grid_S'] - inc_angle_S)
+            S_inc_angle_res_pdf = 1 - (abs_min_arr / np.max(abs_min_arr))
+            # 2.iii. Stack P and S inc. angle PDFs:
+            PS_stack_inc_angle_res_pdf = (P_inc_angle_res_pdf + S_inc_angle_res_pdf) / 2.
 
-        # 3. Combine radius PDF and inc-angle PDF to get best result location within 2D LUT:
-        # Stack pdfs:
-        stacked_pdf = (tp_ts_res_pdf + PS_stack_inc_angle_res_pdf) / 2.
-        # And get best result:
-        max_xz_idxs = np.argwhere(stacked_pdf == np.max(stacked_pdf))
-        x_idx_curr = max_xz_idxs[0][0]
-        z_idx_curr = max_xz_idxs[0][1]
-        event_x_coord_km = LUTs_dict['vel_model_x_labels'][x_idx_curr]
-        event_z_coord_km = LUTs_dict['vel_model_z_labels'][z_idx_curr]
+            # 3. Combine radius PDF and inc-angle PDF to get best result location within 2D LUT:
+            # Stack pdfs:
+            stacked_pdf = (tp_ts_res_pdf + PS_stack_inc_angle_res_pdf) / 2.
+            # And get best result:
+            max_xz_idxs = np.argwhere(stacked_pdf == np.max(stacked_pdf))
+            x_idx_curr = max_xz_idxs[0][0]
+            z_idx_curr = max_xz_idxs[0][1]
+            event_x_coord_km = LUTs_dict['vel_model_x_labels'][x_idx_curr]
+            event_z_coord_km = LUTs_dict['vel_model_z_labels'][z_idx_curr]
+        else:
+            event_x_coord_km = np.nan
+            event_z_coord_km = np.nan
 
         # Plot workings, if specified:
         if verbosity > 1:
