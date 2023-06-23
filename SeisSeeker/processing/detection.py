@@ -1114,6 +1114,16 @@ class setup_detection:
             if len(t_series_df_E) == 0:
                 continue 
 
+            # Check if all inputs are same length, and if not, skip file:
+            if not len(t_series_df_Z) == len(t_series_df_N) == len(t_series_df_E):
+                print("Warning: Files with f uid", f_uid, 
+                      "are not of equal length. Therefore using shortest length (will miss some data).")
+                print("( Lengths are", len(t_series_df_Z) , len(t_series_df_N) , len(t_series_df_E), ")")
+                min_len = np.min(np.array([len(t_series_df_Z), len(t_series_df_N), len(t_series_df_E)]))
+                t_series_df_Z = t_series_df_Z.iloc[:min_len]
+                t_series_df_N = t_series_df_N.iloc[:min_len]
+                t_series_df_E = t_series_df_E.iloc[:min_len]
+
             # Combine horizontals:
             # (Using RMS of N and E signals for slowness and average for BAZI)
             t_series_df_hor = t_series_df_N.copy()
