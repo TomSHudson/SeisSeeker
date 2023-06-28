@@ -1167,19 +1167,29 @@ class setup_detection:
                 print("Event phase associations:")            
                 print(events_df)
                 print("="*40)
-                plt.figure(figsize=(6,4))
-                plt.plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
-                plt.plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
+                fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(6,4))
+                # Plot power:
+                ax[0].plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
+                ax[0].plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
+                # Plot slowness:
+                ax[1].plot(t_series_df_Z['t'], t_series_df_Z['slowness'], label="Vertical slowness")
+                ax[1].plot(t_series_df_hor['t'], t_series_df_hor['slowness'], label="Horizontal slowness")
+                # Plot back-azimuth:
+                ax[2].plot(t_series_df_Z['t'], t_series_df_Z['back_azi'], label="Vertical back-azimuth")
+                ax[2].plot(t_series_df_hor['t'], t_series_df_hor['back_azi'], label="Horizontal back-azimuth")
                 if len(events_df_all) > 0:
-                    plt.scatter(events_df_all['t1'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
-                    plt.scatter(events_df_all['t2'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
+                    ax[0].scatter(events_df_all['t1'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
+                    ax[0].scatter(events_df_all['t2'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
                 else:
                     print("No events to plot.")
-                plt.legend()
-                plt.xlabel("Time")
-                plt.ylabel("Power (arb. units)")
+                ax[0].legend()
+                ax[2].set_xlabel("Time")
+                ax[0].set_ylabel("Power (arb. units)")
+                ax[1].set_ylabel("Slowness ($km$ $s^{-1}$)")
+                ax[2].set_ylabel("Back-azimuth ($^o$)")
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
-                plt.gca().xaxis.set_major_locator(plt.MaxNLocator(3))
+                for i in range(3):
+                    ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
                 plt.show()
         
         return events_df_all
