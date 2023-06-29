@@ -1399,20 +1399,44 @@ class setup_detection:
             chan_labels_tmp.append(tr.stats.channel)
         chan_labels_unique = list(set(chan_labels_tmp))
         # Create datastores to save to:
-        Z_all = np.zeros((len(st[0].data), n_stat))
-        N_all = np.zeros((len(st[0].data), n_stat))
-        E_all = np.zeros((len(st[0].data), n_stat))
+        max_st_len = 0
+        for i in range(len(st)):
+            if len(st[i].data) > max_st_len:
+                max_st_len = len(st[i].data)
+        Z_all = np.zeros((max_st_len, n_stat))
+        N_all = np.zeros((max_st_len, n_stat))
+        E_all = np.zeros((max_st_len, n_stat))
 
-        # Loop over st:
+        # Loop over st, prepping data for stacking:
         for i in range(n_stat):
-            Z_all[:,i] = st.select(channel="??Z")[i].data
+            # Z:
+            if len(st.select(channel="??Z")[i].data) == max_st_len:
+                Z_all[:,i] = st.select(channel="??Z")[i].data
+            else:
+                Z_all[:len(st.select(channel="??Z")[i].data),i] = st.select(channel="??Z")[i].data
             try: 
-                N_all[:,i] = st.select(channel="??N")[i].data
-                E_all[:,i] = st.select(channel="??E")[i].data
+                # N:
+                if len(st.select(channel="??N")[i].data) == max_st_len:
+                    N_all[:,i] = st.select(channel="??N")[i].data
+                else:
+                    N_all[:len(st.select(channel="??N")[i].data),i] = st.select(channel="??N")[i].data
+                # E:
+                if len(st.select(channel="??E")[i].data) == max_st_len:
+                    E_all[:,i] = st.select(channel="??E")[i].data
+                else:
+                    E_all[:len(st.select(channel="??E")[i].data),i] = st.select(channel="??E")[i].data
             except IndexError:
                 # And write if uses 1 and 2 labels rather than N and E:
-                N_all[:,i] = st.select(channel="??1")[i].data
-                E_all[:,i] = st.select(channel="??2")[i].data            
+                # N:
+                if len(st.select(channel="??1")[i].data) == max_st_len:
+                    N_all[:,i] = st.select(channel="??1")[i].data
+                else:
+                    N_all[:len(st.select(channel="??1")[i].data),i] = st.select(channel="??1")[i].data
+                # E:
+                if len(st.select(channel="??2")[i].data) == max_st_len:
+                    E_all[:,i] = st.select(channel="??2")[i].data
+                else:
+                    E_all[:len(st.select(channel="??2")[i].data),i] = st.select(channel="??2")[i].data       
 
         # And create stacked data stream:
         composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
