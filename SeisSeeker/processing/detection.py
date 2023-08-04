@@ -246,7 +246,7 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             max_power_event = _find_max_power_event(tmp_lst)
             filt_events_lst.append(max_power_event)
             # Now make new DataFrame
-            filt_event_df = pd.DataFrame(filt_events_df)
+            filt_events_df = pd.DataFrame(filt_events_lst)
             # And sort indices:
             filt_events_df.reset_index(drop=True, inplace=True)
 
@@ -1101,7 +1101,7 @@ class setup_detection:
         """
         print("Note: <mad_window_length_s> not yet implemented.")
         # Create datastore:
-        events_df_all = pd.DataFrame()
+        evenbts_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
         for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
             f_uid = fname[-20:-8]
@@ -1178,7 +1178,7 @@ class setup_detection:
                 events_df = self._calc_uncertainties(events_df, t_series_df_Z, t_series_df_hor, verbosity=verbosity)
 
             # Append to datastore:
-            events_df_all = events_df_all.append(events_df)
+            events_df_all = pd.concat([events_df_all, events_df])
 
             # Plot detected, phase-associated picks:
             if verbosity > 1:
