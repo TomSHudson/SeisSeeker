@@ -253,9 +253,10 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             sum_pows = filt_events_df['pow1'].values + filt_events_df['pow2'].values
             filt_events_df['sum_pows'] = sum_pows
             # Remove t2 duplicates, keep highest summed power:
-            filt_events_df = filt_events_df.sort_values('sum_pows').drop_duplicates(subset='t2', keep='last')
+            filt_events_df.sort_values('sum_pows', inplace=True)
+            filt_events_df.drop_duplicates(subset='t2', keep='last', inplace=True)
             # And remove sum_pows column:
-            filt_events_df = filt_events_df.drop(columns=['sum_pows'])
+            filt_events_df.drop(columns=['sum_pows'], inplace=True)
 
             # And output df:
             events_df = filt_events_df.copy()
