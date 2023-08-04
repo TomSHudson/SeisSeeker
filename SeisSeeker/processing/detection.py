@@ -227,12 +227,13 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
                 tmp_count+=1
                 if tmp_count == 1:
                     tmp_lst = []
-                    tmp_lst = tmp_lst.append(row)
+                    tmp_lst.append(row)
                 else:
+
                     # Append event if phase within minimum event separation:
                     if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_lst[0].t1) < min_event_sep_s:
                         # Append event to compare:
-                        tmp_lst = tmp_lst.append(row)
+                        tmp_lst.append(row)
                     else:
                         # Find best event from previous events:
                         max_power_event = _find_max_power_event(tmp_lst)
@@ -240,7 +241,7 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
 
                         # And start acrewing new events:
                         tmp_lst = []
-                        tmp_lst = tmp_lst.append(row)
+                        tmp_lst.append(row)
             # And calculate highest power event for final window:
             max_power_event = _find_max_power_event(tmp_lst)
             filt_events_lst.append(max_power_event)
