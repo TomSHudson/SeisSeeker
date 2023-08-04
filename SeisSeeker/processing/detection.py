@@ -1101,7 +1101,7 @@ class setup_detection:
         """
         print("Note: <mad_window_length_s> not yet implemented.")
         # Create datastore:
-        evenbts_df_all = pd.DataFrame()
+        events_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
         for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
             f_uid = fname[-20:-8]
