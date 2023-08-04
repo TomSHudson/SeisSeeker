@@ -85,10 +85,10 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
         # Construct data structure:
         nfft = (2.0**np.ceil(np.log2(n_t_samp)))
         nfft = np.array(nfft, dtype=np.int64)
-        Pxx_all = np.zeros((np.int((nfft/2)+1), n_stations), dtype=np.complex128) # Power spectra
+        Pxx_all = np.zeros((np.int64((nfft/2)+1), n_stations), dtype=np.complex128) # Power spectra
         dt = 1. / fs 
         df = 1.0/(2.0*nfft*dt)
-        xf = np.linspace(0.0, 1.0/(2.0*dt), np.int((nfft/2)+1))
+        xf = np.linspace(0.0, 1.0/(2.0*dt), np.int64((nfft/2)+1))
         # Calculate power spectra for all stations:
         for sta_idx in range(n_stations):
             # Calculate spectra for current station:
