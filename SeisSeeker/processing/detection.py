@@ -218,33 +218,32 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             # Calculate max power of P and S for each potential event:
             # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
             # Define datastores:
-            filt_events_df = pd.DataFrame()
+            filt_events_lst = []
             # And loop over events, selecting only max. power events:
             tmp_count = 0
             for index, row in events_df.iterrows():
                 tmp_count+=1
                 if tmp_count == 1:
-                    tmp_df = pd.DataFrame()
-                    tmp_df = tmp_df.append(row)
+                    tmp_lst = []
+                    tmp_lst = tmp_lst.append(row)
                 else:
                     # Append event if phase within minimum event separation:
-                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < min_event_sep_s:
+                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_lst[0].t1) < min_event_sep_s:
                         # Append event to compare:
-                        tmp_df = tmp_df.append(row)
+                        tmp_lst = tmp_lst.append(row)
                     else:
                         # Find best event from previous events:
-                        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-                        max_power_idx = np.argmax(combined_pows_tmp)
-                        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+                        max_power_event = _find_max_power_event(tmp_lst)
+                        filt_events_lst.append(max_power_event)
 
                         # And start acrewing new events:
-                        tmp_df = pd.DataFrame()
-                        tmp_df = tmp_df.append(row)
+                        tmp_lst = []
+                        tmp_lst = tmp_lst.append(row)
             # And calculate highest power event for final window:
-            combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-            max_power_idx = np.argmax(combined_pows_tmp)
-            filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
-
+            max_power_event = _find_max_power_event(tmp_lst)
+            filt_events_lst.append(max_power_event)
+            # Now make new DataFrame
+            filt_event_df = pd.DataFrame(filt_events_df)
             # And sort indices:
             filt_events_df.reset_index(drop=True, inplace=True)
 
@@ -252,8 +251,7 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             # (using same max. power method)
             # Append summed powers, for sorting:
             sum_pows = filt_events_df['pow1'].values + filt_events_df['pow2'].values
-            sum_pows_df = pd.DataFrame({'sum_pows': sum_pows})
-            filt_events_df = filt_events_df.join(sum_pows_df)
+            filt_events_df['sum_pows'] = sum_pows
             # Remove t2 duplicates, keep highest summed power:
             filt_events_df = filt_events_df.sort_values('sum_pows').drop_duplicates(subset='t2', keep='last')
             # And remove sum_pows column:
@@ -266,6 +264,22 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
 
     return events_df
 
+def _find_max_power_event(events):
+    """
+    Find the maximum power event from a list of events
+
+    Parameters:
+    ----------
+    events : list
+        list (of Dataframe Rows) of event
+
+    """
+    pow1_tmp = np.array([event.pow1 for event in events])
+    pow2_tmp = np.array([event.pow2 for event in events])
+    combined_pows_tmp = pow1_tmp + pow2_tmp
+    max_power_idx = np.argmax(combined_pows_tmp)
+    max_power_event = events[max_power_idx]
+    return max_power_event
 
 def _submit_parallel_fast_freq_domain_array_proc(procnum, return_dict_Pfreq_all, data_curr_run, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
     """Function to submit parallel runs of _fast_freq_domain_array_proc() function."""
