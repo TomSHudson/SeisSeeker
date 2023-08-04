@@ -85,10 +85,10 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
         # Construct data structure:
         nfft = (2.0**np.ceil(np.log2(n_t_samp)))
         nfft = np.array(nfft, dtype=np.int64)
-        Pxx_all = np.zeros((np.int((nfft/2)+1), n_stations), dtype=np.complex128) # Power spectra
+        Pxx_all = np.zeros((np.int64((nfft/2)+1), n_stations), dtype=np.complex128) # Power spectra
         dt = 1. / fs 
         df = 1.0/(2.0*nfft*dt)
-        xf = np.linspace(0.0, 1.0/(2.0*dt), np.int((nfft/2)+1))
+        xf = np.linspace(0.0, 1.0/(2.0*dt), np.int64((nfft/2)+1))
         # Calculate power spectra for all stations:
         for sta_idx in range(n_stations):
             # Calculate spectra for current station:
@@ -173,7 +173,7 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
     Function to perform phase association for numba implementation.
     """
     # Setup events datastores:
-    events_df = pd.DataFrame()
+    list_of_curr_event_dfs = []
     # Find back-azimuths associated with phase picks:
     bazis_Z = t_series_df_Z['back_azi'].values[peaks_Z]
     bazis_hor = t_series_df_hor['back_azi'].values[peaks_hor]
@@ -203,7 +203,10 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
                                             'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
                                             'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
                                             'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
-        events_df = events_df.append(curr_event_df)
+        list_of_curr_event_dfs.append(curr_event_df)
+        print(curr_event_df)
+    
+    events_df = pd.concat(list_of_curr_event_dfs)
     # And tidy:
     del t_Z_secs_after_start, t_hor_secs_after_start, Z_hor_phase_pair_idxs
     gc.collect()
@@ -217,33 +220,33 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             # Calculate max power of P and S for each potential event:
             # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
             # Define datastores:
-            filt_events_df = pd.DataFrame()
+            filt_events_lst = []
             # And loop over events, selecting only max. power events:
             tmp_count = 0
             for index, row in events_df.iterrows():
                 tmp_count+=1
                 if tmp_count == 1:
-                    tmp_df = pd.DataFrame()
-                    tmp_df = tmp_df.append(row)
+                    tmp_lst = []
+                    tmp_lst.append(row)
                 else:
+
                     # Append event if phase within minimum event separation:
-                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < min_event_sep_s:
+                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_lst[0].t1) < min_event_sep_s:
                         # Append event to compare:
-                        tmp_df = tmp_df.append(row)
+                        tmp_lst.append(row)
                     else:
                         # Find best event from previous events:
-                        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-                        max_power_idx = np.argmax(combined_pows_tmp)
-                        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+                        max_power_event = _find_max_power_event(tmp_lst)
+                        filt_events_lst.append(max_power_event)
 
                         # And start acrewing new events:
-                        tmp_df = pd.DataFrame()
-                        tmp_df = tmp_df.append(row)
+                        tmp_lst = []
+                        tmp_lst.append(row)
             # And calculate highest power event for final window:
-            combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-            max_power_idx = np.argmax(combined_pows_tmp)
-            filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
-
+            max_power_event = _find_max_power_event(tmp_lst)
+            filt_events_lst.append(max_power_event)
+            # Now make new DataFrame
+            filt_events_df = pd.DataFrame(filt_events_lst)
             # And sort indices:
             filt_events_df.reset_index(drop=True, inplace=True)
 
@@ -251,12 +254,12 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             # (using same max. power method)
             # Append summed powers, for sorting:
             sum_pows = filt_events_df['pow1'].values + filt_events_df['pow2'].values
-            sum_pows_df = pd.DataFrame({'sum_pows': sum_pows})
-            filt_events_df = filt_events_df.join(sum_pows_df)
+            filt_events_df['sum_pows'] = sum_pows
             # Remove t2 duplicates, keep highest summed power:
-            filt_events_df = filt_events_df.sort_values('sum_pows').drop_duplicates(subset='t2', keep='last')
+            filt_events_df.sort_values('sum_pows', inplace=True)
+            filt_events_df.drop_duplicates(subset='t2', keep='last', inplace=True)
             # And remove sum_pows column:
-            filt_events_df = filt_events_df.drop(columns=['sum_pows'])
+            filt_events_df.drop(columns=['sum_pows'], inplace=True)
 
             # And output df:
             events_df = filt_events_df.copy()
@@ -265,6 +268,22 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
 
     return events_df
 
+def _find_max_power_event(events):
+    """
+    Find the maximum power event from a list of events
+
+    Parameters:
+    ----------
+    events : list
+        list (of Dataframe Rows) of event
+
+    """
+    pow1_tmp = np.array([event.pow1 for event in events])
+    pow2_tmp = np.array([event.pow2 for event in events])
+    combined_pows_tmp = pow1_tmp + pow2_tmp
+    max_power_idx = np.argmax(combined_pows_tmp)
+    max_power_event = events[max_power_idx]
+    return max_power_event
 
 def _submit_parallel_fast_freq_domain_array_proc(procnum, return_dict_Pfreq_all, data_curr_run, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
     """Function to submit parallel runs of _fast_freq_domain_array_proc() function."""
@@ -775,7 +794,7 @@ class setup_detection:
                             continue
 
                         # Create datastore:
-                        out_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
+                        store_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
 
                         # Load data:
                         st = self._load_day_of_data(year, julday, hour=hour)
@@ -831,7 +850,7 @@ class setup_detection:
                                 for t_serie in t_series:
                                     t_series_out.append( str(starttime_this_st + t_serie) )
                             tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                            out_df = out_df.append(tmp_df)
+                            out_df = pd.concat([store_df, tmp_df])
                             out_df.reset_index(drop=True, inplace=True)
 
                             # And save data out:
@@ -1159,7 +1178,7 @@ class setup_detection:
                 events_df = self._calc_uncertainties(events_df, t_series_df_Z, t_series_df_hor, verbosity=verbosity)
 
             # Append to datastore:
-            events_df_all = events_df_all.append(events_df)
+            events_df_all = pd.concat([events_df_all, events_df])
 
             # Plot detected, phase-associated picks:
             if verbosity > 1:
