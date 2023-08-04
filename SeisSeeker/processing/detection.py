@@ -791,7 +791,7 @@ class setup_detection:
                             continue
 
                         # Create datastore:
-                        out_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
+                        datastore = {'t': [], 'power': [], 'slowness': [], 'back_azi': []}
 
                         # Load data:
                         st = self._load_day_of_data(year, julday, hour=hour)
@@ -846,8 +846,11 @@ class setup_detection:
                             else:
                                 for t_serie in t_series:
                                     t_series_out.append( str(starttime_this_st + t_serie) )
-                            tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                            out_df = out_df.append(tmp_df)
+                            datastore['t'].append(t_series_out)
+                            datastore['power'].append(powers)
+                            datastore['slowness'].append(slownesses)
+                            datastore['back_azi'].append(back_azis)
+                            out_df = pd.DataFrame(datastore, columns=['t', 'power', 'slowness', 'back_azi'])
                             out_df.reset_index(drop=True, inplace=True)
 
                             # And save data out:
