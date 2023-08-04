@@ -203,6 +203,7 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
                                             'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
                                             'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
                                             'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
+        print(curr_event_df)
         events_df = events_df.append(curr_event_df)
     # And tidy:
     del t_Z_secs_after_start, t_hor_secs_after_start, Z_hor_phase_pair_idxs
