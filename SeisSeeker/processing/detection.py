@@ -724,15 +724,19 @@ class setup_detection:
         """Function to load a day of data."""
         # Load in data:
         mseed_dir = os.path.join(self.archivedir, str(year), str(julday).zfill(3))
+        print(mseed_dir)
         st = obspy.Stream()
         for index, row in self.stations_df.iterrows():
             station = row['Name']
             for channel in self.channels_to_use:
+                fname = f'{station}_{year}????T{hour}*.{channel}'
+                full_fname = os.path.join(mseed_dir, fname)
+                print()
                 try:
                     if hour:
-                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_", str(hour).zfill(2), "*", station, "*", channel, "*"))))
+                        st_tmp = obspy.read(full_fname)
                     else:
-                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_*", station, "*", channel, "*"))))
+                        st_tmp = obspy.read(full_fname)
                     for tr in st_tmp:
                         st.append(tr)
                 except:
