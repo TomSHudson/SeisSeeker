@@ -547,6 +547,114 @@ class setup_detection:
         # And load existing detection instance, if specified:
         if preload_fname:
             self.load(preload_fname)
+   
+    def run_array_proc(self):
+        """Function to run core array processing.
+        Performed in frequency domain. Involves applying phase (equiv. to time) shift 
+        for each frequency, over a range of specified slownesses.
+        Function inspured by work of D. Bowden (see Bowden et al. (2020))."""
+
+        # Loop over years:
+        for year in range(self.starttime.year, self.endtime.year+1):
+            # Loop over days:
+            for julday in range(1,367):
+                # Do some filtering for first and last years:
+                if year == self.starttime.year:
+                    if julday < self.starttime.julday:
+                        continue # Ignore day, as out of range
+                if year == self.endtime.year:
+                    if julday > self.endtime.julday:
+                        continue # Ignore day, as out of range
+                
+                # And process data:
+
+                # Loop over channels:
+                for self.channel_curr in self.channels_to_use:
+                    print("="*60)
+                    print("Processing data for year "+str(year)+", day "+str(julday).zfill(3)+", channel "+self.channel_curr)
+
+                    # And process for individual hours:
+                    # (to reduce memory usage)
+                    for hour in range(24):
+                        print("Processing for hour", str(hour).zfill(2))
+                        if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
+                            continue
+                        if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour):
+                            continue
+
+                        # Create datastore:
+                        store_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
+
+                        # Load data:
+                        st = self._load_day_of_data(year, julday, hour=hour)
+                        # starttime_this_day = obspy.UTCDateTime(year=year, julday=julday)
+                        try:
+                            starttime_this_st = st[0].stats.starttime
+                        except IndexError:
+                            # And skip if no data:
+                            print("Skipping hour as no data")
+                            del st 
+                            gc.collect()
+                            continue
+                        
+                        # And loop over minutes (to save on memory issues):
+                        for minute in range(60):
+                            # Check whether specified window is greater than a minute in duration:
+                            if self.endtime - self.starttime > 60:
+                                # Check time within specified run window:
+                                if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
+                                    continue
+                                if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
+                                    continue
+                            elif self.starttime.minute != minute:
+                                continue
+                                
+                            # Trim data:
+                            st_trimmed = st.copy()
+                            if self.win_len_s > self.win_step_inc_s:
+                                self.win_pad_s = self.win_len_s
+                            else:
+                                self.win_pad_s = 0.
+                            if self.endtime - self.starttime > 60:
+                                st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), 
+                                                endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
+                            else:
+                                st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
+
+                            # Run array processing:
+                            # (to get power in slowness space)
+                            Psum_all = self._beamforming(st_trimmed)
+                            del st_trimmed 
+                            gc.collect()
+
+                            # Calculate time-series outputs (for detection) from data:
+                            t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
+                            
+                            # And append to data out:
+                            t_series_out = []
+                            if self.endtime - self.starttime > 60:
+                                for t_serie in t_series:
+                                    t_series_out.append( str(starttime_this_st + (minute*60) + t_serie) )
+                            else:
+                                for t_serie in t_series:
+                                    t_series_out.append( str(starttime_this_st + t_serie) )
+                            tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
+                            out_df = pd.concat([store_df, tmp_df])
+                            out_df.reset_index(drop=True, inplace=True)
+
+                            # And save data out:
+                            out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
+                                                        str(starttime_this_st.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
+                            out_df.to_csv(out_fname, index=False)
+
+                            # And append fname to history:
+                            self.out_fnames_array_proc.append(out_fname)
+
+                            # And clear memory:
+                            del Psum_all, t_series, powers, slownesses, back_azis
+                            gc.collect()
+                            
+        return None
 
 
     def _setup_array_receiver_coords(self):
@@ -755,117 +863,6 @@ class setup_detection:
         gc.collect()
 
         return Psum_all
-
-    
-    def run_array_proc(self):
-        """Function to run core array processing.
-        Performed in frequency domain. Involves applying phase (equiv. to time) shift 
-        for each frequency, over a range of specified slownesses.
-        Function inspured by work of D. Bowden (see Bowden et al. (2020))."""
-        # Prep. stations df:
-        #self._setup_array_receiver_coords()
-
-        # Loop over years:
-        for year in range(self.starttime.year, self.endtime.year+1):
-            # Loop over days:
-            for julday in range(1,367):
-                # Do some filtering for first and last years:
-                if year == self.starttime.year:
-                    if julday < self.starttime.julday:
-                        continue # Ignore day, as out of range
-                if year == self.endtime.year:
-                    if julday > self.endtime.julday:
-                        continue # Ignore day, as out of range
-                
-                # And process data:
-
-                # Loop over channels:
-                for self.channel_curr in self.channels_to_use:
-                    print("="*60)
-                    print("Processing data for year "+str(year)+", day "+str(julday).zfill(3)+", channel "+self.channel_curr)
-
-                    # And process for individual hours:
-                    # (to reduce memory usage)
-                    for hour in range(24):
-                        print("Processing for hour", str(hour).zfill(2))
-                        if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
-                            continue
-                        if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour):
-                            continue
-
-                        # Create datastore:
-                        store_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
-
-                        # Load data:
-                        st = self._load_day_of_data(year, julday, hour=hour)
-                        # starttime_this_day = obspy.UTCDateTime(year=year, julday=julday)
-                        try:
-                            starttime_this_st = st[0].stats.starttime
-                        except IndexError:
-                            # And skip if no data:
-                            print("Skipping hour as no data")
-                            del st 
-                            gc.collect()
-                            continue
-                        
-                        # And loop over minutes (to save on memory issues):
-                        for minute in range(60):
-                            # Check whether specified window is greater than a minute in duration:
-                            if self.endtime - self.starttime > 60:
-                                # Check time within specified run window:
-                                if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
-                                    continue
-                                if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
-                                    continue
-                            elif self.starttime.minute != minute:
-                                continue
-                                
-                            # Trim data:
-                            st_trimmed = st.copy()
-                            if self.win_len_s > self.win_step_inc_s:
-                                self.win_pad_s = self.win_len_s
-                            else:
-                                self.win_pad_s = 0.
-                            if self.endtime - self.starttime > 60:
-                                st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), 
-                                                endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
-                            else:
-                                st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
-
-                            # Run array processing:
-                            # (to get power in slowness space)
-                            Psum_all = self._beamforming(st_trimmed)
-                            del st_trimmed 
-                            gc.collect()
-
-                            # Calculate time-series outputs (for detection) from data:
-                            t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
-                            
-                            # And append to data out:
-                            t_series_out = []
-                            if self.endtime - self.starttime > 60:
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + (minute*60) + t_serie) )
-                            else:
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + t_serie) )
-                            tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                            out_df = pd.concat([store_df, tmp_df])
-                            out_df.reset_index(drop=True, inplace=True)
-
-                            # And save data out:
-                            out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
-                                                        str(starttime_this_st.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
-                            out_df.to_csv(out_fname, index=False)
-
-                            # And append fname to history:
-                            self.out_fnames_array_proc.append(out_fname)
-
-                            # And clear memory:
-                            del Psum_all, t_series, powers, slownesses, back_azis
-                            gc.collect()
-                            
-        return None
 
     def _calculate_mad(self, x, scale=1.4826):
         """
