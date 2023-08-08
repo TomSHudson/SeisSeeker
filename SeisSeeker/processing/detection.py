@@ -579,7 +579,7 @@ class setup_detection:
                     # (to reduce memory usage)
                     for hour in range(24):
                         print("Processing for hour", str(hour).zfill(2))
-                        if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
+                        if self.starttime >= obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
                             continue
                         if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour):
                             continue
@@ -731,7 +731,6 @@ class setup_detection:
             for channel in self.channels_to_use:
                 fname = f'{station}_{year}????T{hour}*.{channel}'
                 full_fname = os.path.join(mseed_dir, fname)
-                print()
                 try:
                     if hour:
                         st_tmp = obspy.read(full_fname)
