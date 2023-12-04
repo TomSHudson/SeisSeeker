@@ -762,7 +762,6 @@ class setup_detection:
     
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
-        print(st)
         self.n_win = int(((st[0].stats.endtime - self.win_pad_s) - st[0].stats.starttime) / self.win_step_inc_s) # (Note: endtime - self.win_pad_s as pass extra padding via trimmed st)
         self.fs = st[0].stats.sampling_rate
         self.n_t_samp = int(self.win_len_s * self.fs) # num samples in time
