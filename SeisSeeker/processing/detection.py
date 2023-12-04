@@ -620,9 +620,10 @@ class setup_detection:
                             if self.endtime - self.starttime > 60:
                                 st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), 
                                                 endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
+                                print(obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute))
+                                print(obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
                             else:
                                 st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
-
                             # Run array processing:
                             # (to get power in slowness space)
                             Psum_all = self._beamforming(st_trimmed)
@@ -646,7 +647,8 @@ class setup_detection:
 
                             # And save data out:
                             out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
-                                                        str(starttime_this_st.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
+                                                        str(starttime_this_st.hour).zfill(2), str(starttime_this_st.minute).zfill(2),
+                                                        "_ch", self.channel_curr[-1], ".csv")))
                             out_df.to_csv(out_fname, index=False)
 
                             # And append fname to history:
@@ -729,17 +731,19 @@ class setup_detection:
         for index, row in self.stations_df.iterrows():
             station = row['Name']
             for channel in self.channels_to_use:
-                fname = f'{station}_{year}????T{hour}*.{channel}'
-                full_fname = os.path.join(mseed_dir, fname)
+                # fname = f'{station}_{year}????T{hour}*.{channel}'
+                # fname = f'{}'
+                # full_fname = os.path.join(mseed_dir, fname)
                 try:
                     if hour:
-                        st_tmp = obspy.read(full_fname)
+                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_", str(hour).zfill(2), "*", station, "*", channel, "*"))))
                     else:
-                        st_tmp = obspy.read(full_fname)
+                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_*", station, "*", channel, "*"))))
                     for tr in st_tmp:
                         st.append(tr)
                 except:
                     print("No data for "+station+", channel = "+channel+". Skipping this data.")
+                    # print(full_fname)
                     continue
         # Merge data:
         st.detrend('demean')
@@ -758,6 +762,7 @@ class setup_detection:
     
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
+        print(st)
         self.n_win = int(((st[0].stats.endtime - self.win_pad_s) - st[0].stats.starttime) / self.win_step_inc_s) # (Note: endtime - self.win_pad_s as pass extra padding via trimmed st)
         self.fs = st[0].stats.sampling_rate
         self.n_t_samp = int(self.win_len_s * self.fs) # num samples in time
