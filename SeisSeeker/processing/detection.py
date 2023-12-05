@@ -604,9 +604,9 @@ class setup_detection:
                             # Check whether specified window is greater than a minute in duration:
                             if self.endtime - self.starttime > 60:
                                 # Check time within specified run window:
-                                if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
+                                if self.starttime >= obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
                                     continue
-                                if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
+                                if self.endtime <= obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
                                     continue
                             elif self.starttime.minute != minute:
                                 continue
@@ -636,6 +636,7 @@ class setup_detection:
                             # And append to data out:
                             t_series_out = []
                             if self.endtime - self.starttime > 60:
+                                ### DEBUG ME!
                                 for t_serie in t_series:
                                     t_series_out.append( str(starttime_this_st + (minute*60) + t_serie) )
                             else:
