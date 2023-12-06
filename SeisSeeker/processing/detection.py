@@ -556,15 +556,12 @@ class setup_detection:
         Function inspured by work of D. Bowden (see Bowden et al. (2020))."""
 
         # Find number of days to run array processing over
-        dt_start = self.starttime.datetime
-        dt_end = self.endtime.datetime
+        dt_start = self.starttime.date
+        dt_end = self.endtime.date
         ndays = (dt_end - dt_start).days + 1 
         query_dates = [dt_start + d for d in range(0,ndays)]
         for date in query_dates:
             # Loop over dates within start/end range:
-            year = date.year
-            month = date.month
-            day = date.day
             # Loop over channels:
             for self.channel_curr in self.channels_to_use:
                 print("="*60)
@@ -572,18 +569,18 @@ class setup_detection:
                 # And process for individual hours:
                 # (to reduce memory usage)
                 for hour in range(24):
-                    print("Processing for hour", str(hour).zfill(2))
-                    if self.starttime >= obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
+                    # Loop over every hour in every day..
+                    print(f"Processing for hour: {hour:02d}")
+                    if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
-                    if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour):
+                    if self.endtime < obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
                         continue
 
                     # Create datastore:
                     store_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
 
                     # Load data:
-                    st = self._load_day_of_data(year, julday, hour=hour)
-                    # starttime_this_day = obspy.UTCDateTime(year=year, julday=julday)
+                    st = self._load_day_of_data(year=date.year, month=date.month, day=date.day, hour=hour)
                     try:
                         starttime_this_st = st[0].stats.starttime
                     except IndexError:
@@ -598,9 +595,9 @@ class setup_detection:
                         # Check whether specified window is greater than a minute in duration:
                         if self.endtime - self.starttime > 60:
                             # Check time within specified run window:
-                            if self.starttime >= obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
+                            if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute) + 60:
                                 continue
-                            if self.endtime <= obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
+                            if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute):
                                 continue
                         elif self.starttime.minute != minute:
                             continue
@@ -612,10 +609,10 @@ class setup_detection:
                         else:
                             self.win_pad_s = 0.
                         if self.endtime - self.starttime > 60:
-                            st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), 
-                                            endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
-                            print(obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute))
-                            print(obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
+                            st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day,  hour=hour, minute=minute), 
+                                            endtime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
+                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute))
+                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, minute=minute)+60+self.win_pad_s)
                         else:
                             st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
                         time_this_minute_st = st_trimmed[0].stats.starttime
@@ -639,9 +636,8 @@ class setup_detection:
                     store_df.reset_index(drop=True, inplace=True)
 
                     # And save data out:
-                    out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
-                                                str(starttime_this_st.hour).zfill(2), str(starttime_this_st.minute).zfill(2),
-                                                "_ch", self.channel_curr[-1], ".csv")))
+                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{starttime_this_st.hour:02d}00_ch{self.channel_curr[-1].csv}'
+                    out_fname = os.path.join(self.outdir, outfile)
                     store_df.to_csv(out_fname, index=False)
 
                     # And append fname to history:
