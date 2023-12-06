@@ -624,6 +624,7 @@ class setup_detection:
                                 print(obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
                             else:
                                 st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
+                            time_this_minute_st = st_trimmed[0].stats.starttime
                             # Run array processing:
                             # (to get power in slowness space)
                             Psum_all = self._beamforming(st_trimmed)
@@ -635,29 +636,26 @@ class setup_detection:
                             
                             # And append to data out:
                             t_series_out = []
-                            if self.endtime - self.starttime > 60:
-                                ### DEBUG ME!
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + (minute*60) + t_serie) )
-                            else:
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + t_serie) )
+                            for t_serie in t_series:
+                                t_series_out.append( str(time_this_minute_st + t_serie) )
+
                             tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                            out_df = pd.concat([store_df, tmp_df])
-                            out_df.reset_index(drop=True, inplace=True)
+                            store_df = pd.concat([store_df, tmp_df])
+    
+                        store_df.reset_index(drop=True, inplace=True)
 
-                            # And save data out:
-                            out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
-                                                        str(starttime_this_st.hour).zfill(2), str(starttime_this_st.minute).zfill(2),
-                                                        "_ch", self.channel_curr[-1], ".csv")))
-                            out_df.to_csv(out_fname, index=False)
+                        # And save data out:
+                        out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
+                                                    str(starttime_this_st.hour).zfill(2), str(starttime_this_st.minute).zfill(2),
+                                                    "_ch", self.channel_curr[-1], ".csv")))
+                        store_df.to_csv(out_fname, index=False)
 
-                            # And append fname to history:
-                            self.out_fnames_array_proc.append(out_fname)
+                        # And append fname to history:
+                        self.out_fnames_array_proc.append(out_fname)
 
-                            # And clear memory:
-                            del Psum_all, t_series, powers, slownesses, back_azis
-                            gc.collect()
+                        # And clear memory:
+                        del Psum_all, t_series, powers, slownesses, back_azis
+                        gc.collect()
                             
         return None
 
