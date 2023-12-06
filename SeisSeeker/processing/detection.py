@@ -577,7 +577,7 @@ class setup_detection:
                     # (to reduce memory usage)
                     for hour in range(24):
                         print("Processing for hour", str(hour).zfill(2))
-                        if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
+                        if self.starttime >= obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
                             continue
                         if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour):
                             continue
@@ -602,9 +602,9 @@ class setup_detection:
                             # Check whether specified window is greater than a minute in duration:
                             if self.endtime - self.starttime > 60:
                                 # Check time within specified run window:
-                                if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
+                                if self.starttime >= obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
                                     continue
-                                if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
+                                if self.endtime <= obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
                                     continue
                             elif self.starttime.minute != minute:
                                 continue
@@ -618,9 +618,11 @@ class setup_detection:
                             if self.endtime - self.starttime > 60:
                                 st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), 
                                                 endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
+                                print(obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute))
+                                print(obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
                             else:
                                 st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
-
+                            time_this_minute_st = st_trimmed[0].stats.starttime
                             # Run array processing:
                             # (to get power in slowness space)
                             Psum_all = self._beamforming(st_trimmed)
@@ -632,27 +634,26 @@ class setup_detection:
                             
                             # And append to data out:
                             t_series_out = []
-                            if self.endtime - self.starttime > 60:
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + (minute*60) + t_serie) )
-                            else:
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + t_serie) )
+                            for t_serie in t_series:
+                                t_series_out.append( str(time_this_minute_st + t_serie) )
+
                             tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                            out_df = pd.concat([store_df, tmp_df])
-                            out_df.reset_index(drop=True, inplace=True)
+                            store_df = pd.concat([store_df, tmp_df])
+    
+                        store_df.reset_index(drop=True, inplace=True)
 
-                            # And save data out:
-                            out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
-                                                        str(starttime_this_st.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
-                            out_df.to_csv(out_fname, index=False)
+                        # And save data out:
+                        out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
+                                                    str(starttime_this_st.hour).zfill(2), str(starttime_this_st.minute).zfill(2),
+                                                    "_ch", self.channel_curr[-1], ".csv")))
+                        store_df.to_csv(out_fname, index=False)
 
-                            # And append fname to history:
-                            self.out_fnames_array_proc.append(out_fname)
+                        # And append fname to history:
+                        self.out_fnames_array_proc.append(out_fname)
 
-                            # And clear memory:
-                            del Psum_all, t_series, powers, slownesses, back_azis
-                            gc.collect()
+                        # And clear memory:
+                        del Psum_all, t_series, powers, slownesses, back_azis
+                        gc.collect()
                             
         return None
 
@@ -721,10 +722,14 @@ class setup_detection:
         """Function to load a day of data."""
         # Load in data:
         mseed_dir = os.path.join(self.archivedir, str(year), str(julday).zfill(3))
+        print(mseed_dir)
         st = obspy.Stream()
         for index, row in self.stations_df.iterrows():
             station = row['Name']
             for channel in self.channels_to_use:
+                # fname = f'{station}_{year}????T{hour}*.{channel}'
+                # fname = f'{}'
+                # full_fname = os.path.join(mseed_dir, fname)
                 try:
                     if hour:
                         st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_", str(hour).zfill(2), "*", station, "*", channel, "*"))))
@@ -734,6 +739,7 @@ class setup_detection:
                         st.append(tr)
                 except:
                     print("No data for "+station+", channel = "+channel+". Skipping this data.")
+                    # print(full_fname)
                     continue
         # Merge data:
         st.detrend('demean')
