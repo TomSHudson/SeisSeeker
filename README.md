@@ -4,3 +4,5 @@ SeisSeeker is a package for performing beamforming for earthquake detection. It 
 
 A decription of how the package works can be found here:
 Thomas S. Hudson, Alex M. Brisbourne, Sofia-Katerina Kufner, J-Michael Kendall, and Andy M. Smith. (in review). "Array processing in cryoseismology". Submitted to: The Cryosphere.
+
+This version of SeisSeeker has been modified for application to monitoring of North Sea Microseismicity

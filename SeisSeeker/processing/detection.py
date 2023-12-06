@@ -547,7 +547,7 @@ class setup_detection:
         # And load existing detection instance, if specified:
         if preload_fname:
             self.load(preload_fname)
-   
+
     def run_array_proc(self):
         """Function to run core array processing.
         Performed in frequency domain. Involves applying phase (equiv. to time) shift 
@@ -656,7 +656,6 @@ class setup_detection:
                             
         return None
 
-
     def _setup_array_receiver_coords(self):
         """Function to setup station receiver coords in correct format for 
         array processing."""
@@ -686,7 +685,6 @@ class setup_detection:
         # And in polar coords from N:
         self.stations_df['r_array_coords_km'], self.stations_df['theta_array_coords_deg'] = xy_to_rtheta(self.stations_df['x_array_coords_km'], 
                                                                                                             self.stations_df['y_array_coords_km']) 
-
 
 
     def find_min_max_array_sensitivity(self, vel_assumed=3.0):
