@@ -559,7 +559,7 @@ class setup_detection:
         dt_start = self.starttime.date
         dt_end = self.endtime.date
         ndays = (dt_end - dt_start).days + 1 
-        query_dates = [dt_start + d for d in range(0,ndays)]
+        query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
         for date in query_dates:
             # Loop over dates within start/end range:
             # Loop over channels:
@@ -612,7 +612,7 @@ class setup_detection:
                             st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day,  hour=hour, minute=minute), 
                                             endtime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
                             print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute))
-                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, minute=minute)+60+self.win_pad_s)
+                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
                         else:
                             st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
                         time_this_minute_st = st_trimmed[0].stats.starttime
@@ -636,7 +636,7 @@ class setup_detection:
                     store_df.reset_index(drop=True, inplace=True)
 
                     # And save data out:
-                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{starttime_this_st.hour:02d}00_ch{self.channel_curr[-1].csv}'
+                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{starttime_this_st.hour:02d}00_ch{self.channel_curr[-1]}.csv'
                     out_fname = os.path.join(self.outdir, outfile)
                     store_df.to_csv(out_fname, index=False)
 
@@ -1095,7 +1095,7 @@ class setup_detection:
         events_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
         for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
-            f_uid = fname[-20:-8]
+            f_uid = fname[-21:-8]
             # Check if in list to process:
             if fname in self.out_fnames_array_proc:
                 # And load in data:
