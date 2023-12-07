@@ -573,7 +573,7 @@ class setup_detection:
                     print(f"Processing for hour: {hour:02d}")
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
-                    if self.endtime < obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
+                    if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
                         continue
 
                     # Create datastore:
@@ -633,6 +633,10 @@ class setup_detection:
                         tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
                         store_df = pd.concat([store_df, tmp_df])
 
+                        # And clear memory:
+                        del Psum_all, t_series, powers, slownesses, back_azis
+                        gc.collect()
+
                     store_df.reset_index(drop=True, inplace=True)
 
                     # And save data out:
@@ -643,9 +647,7 @@ class setup_detection:
                     # And append fname to history:
                     self.out_fnames_array_proc.append(out_fname)
 
-                    # And clear memory:
-                    del Psum_all, t_series, powers, slownesses, back_azis
-                    gc.collect()
+
                         
         return None
 
