@@ -981,6 +981,8 @@ class setup_detection:
                 plt.colorbar(im)
                 plt.grid()
                 plt.show()
+                fig.savefig('slow_spac_vert.png', dpi=600)
+
 
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
@@ -1066,7 +1068,7 @@ class setup_detection:
                 plt.colorbar(im)
                 plt.grid()
                 plt.show()
-
+            fig.savefig('slow_spac_horz.png', dpi=600)
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
@@ -1083,7 +1085,7 @@ class setup_detection:
         return events_df
     
     
-    def detect_events(self, verbosity=0):
+    def detect_events(self, verbosity=0, fnames=None):
         """Function to detect events, based on the power time-series generated 
         by run_array_proc(). Note: Currently, only Median Absolute Deviation 
         triggering is implemented.
@@ -1096,7 +1098,9 @@ class setup_detection:
         # Create datastore:
         events_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
-        for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
+        if fnames is None:
+            fnames = glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv"))
+        for fname in fnames:
             f_uid = fname[-21:-8]
             # Check if in list to process:
             if fname in self.out_fnames_array_proc:
@@ -1179,7 +1183,7 @@ class setup_detection:
                 print("Event phase associations:")            
                 print(events_df)
                 print("="*40)
-                fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(6,4))
+                fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(9,6))
                 # Plot power:
                 ax[0].plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
                 ax[0].plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
@@ -1202,7 +1206,9 @@ class setup_detection:
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
                 for i in range(3):
                     ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
+                fig.savefig('Phase_assocaition.png', dpi=600)
                 plt.show()
+
         
         return events_df_all
     
