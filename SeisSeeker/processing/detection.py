@@ -968,7 +968,7 @@ class setup_detection:
             # ------- End vertical -------
 
             # Plot slowness space that used for uncertainty, if specified:
-            if verbosity > 1:
+            if verbosity >= 1:
                 fig = plt.figure()
                 Axes3D(fig)
                 rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
@@ -981,7 +981,7 @@ class setup_detection:
                 plt.colorbar(im)
                 plt.grid()
                 plt.show()
-                fig.savefig('slow_spac_vert.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/{self.starttime}_slow_spac_vert.png', dpi=600)
 
 
             # ------- For horizontal -------:
@@ -1055,7 +1055,7 @@ class setup_detection:
             # ------- End horizontal -------
             
             # Plot slowness space that used for uncertainty, if specified:
-            if verbosity > 1:
+            if verbosity >= 1:
                 fig = plt.figure()
                 Axes3D(fig)
                 rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
@@ -1068,7 +1068,7 @@ class setup_detection:
                 plt.colorbar(im)
                 plt.grid()
                 plt.show()
-            fig.savefig('slow_spac_horz.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/{self.starttime}_slow_spac_vert.png', dpi=600)
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
