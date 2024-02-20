@@ -1207,7 +1207,7 @@ class setup_detection:
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
                 for i in range(3):
                     ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
-                fig.savefig('Phase_assocaition.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/Phase_assocaition_{f_uid}.png', dpi=600)
                 plt.show()
 
         
