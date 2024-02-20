@@ -1095,7 +1095,7 @@ class setup_detection:
         - mad_multiplier
         - min_event_sep_s
         """
-        print("Note: <mad_window_length_s> not yet implemented.")
+        # print("Note: <mad_window_length_s> not yet implemented.")
         # Create datastore:
         events_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
