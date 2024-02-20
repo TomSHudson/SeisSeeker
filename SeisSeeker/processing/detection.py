@@ -982,7 +982,7 @@ class setup_detection:
                 plt.grid()
                 event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
                 event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
-                fig.savefig(f'{self.outdir}/plots/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/vespagrams/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
                 plt.close()
 
             # ------- For horizontal -------:
@@ -1068,7 +1068,7 @@ class setup_detection:
                 im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
                 plt.colorbar(im)
                 plt.grid()
-                fig.savefig(f'{self.outdir}/plots/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_horz.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/vespagrams/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_horz.png', dpi=600)
                 plt.close()
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
@@ -1207,7 +1207,7 @@ class setup_detection:
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
                 for i in range(3):
                     ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
-                fig.savefig(f'{self.outdir}/plots/Phase_assocaition_{f_uid}.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/detection_t_series/Phase_assocaition_{f_uid}.png', dpi=600)
                 plt.show()
 
         
