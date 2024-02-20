@@ -980,9 +980,10 @@ class setup_detection:
                 im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
                 plt.colorbar(im)
                 plt.grid()
-                plt.show()
-                fig.savefig(f'{self.outdir}/plots/{self.starttime}_slow_spac_vert.png', dpi=600)
-
+                event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
+                event_time_stamp = f'{event_phase_arr_time.hour:02s}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
+                fig.savefig(f'{self.outdir}/plots/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
+                plt.close()
 
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
@@ -1067,8 +1068,8 @@ class setup_detection:
                 im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
                 plt.colorbar(im)
                 plt.grid()
-                plt.show()
-                fig.savefig(f'{self.outdir}/plots/{self.starttime}_slow_spac_vert.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
+                plt.close()
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
