@@ -1068,7 +1068,7 @@ class setup_detection:
                 im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
                 plt.colorbar(im)
                 plt.grid()
-                fig.savefig(f'{self.outdir}/plots/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
+                fig.savefig(f'{self.outdir}/plots/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_horz.png', dpi=600)
                 plt.close()
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
