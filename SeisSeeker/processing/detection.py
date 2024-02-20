@@ -981,7 +981,7 @@ class setup_detection:
                 plt.colorbar(im)
                 plt.grid()
                 event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
-                event_time_stamp = f'{event_phase_arr_time.hour:02s}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
+                event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
                 fig.savefig(f'{self.outdir}/plots/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
                 plt.close()
 
