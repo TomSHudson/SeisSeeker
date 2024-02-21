@@ -564,7 +564,7 @@ class setup_detection:
         # Find number of days to run array processing over
         dt_start = self.starttime.date
         dt_end = self.endtime.date
-        ndays = (dt_end - dt_start).days + 1 
+        ndays = (dt_end - dt_start).days
         query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
         print(query_dates)
         for date in query_dates:
