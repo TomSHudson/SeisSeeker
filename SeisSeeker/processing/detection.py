@@ -197,17 +197,23 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
     # Organise outputs into useful form:
     if verbosity > 1:
         print("Writing events")
+
+    curr_events = {'t1':[],'t2':[], 'power1': [], 'power2':[], 'slowness1':[],
+                   'slowness2':[], 'bazi1':[], 'bazi2':[]}
+    
     for event_idx in range(len(Z_hor_phase_pair_idxs)):
         curr_peak_Z_idx = Z_hor_phase_pair_idxs[event_idx][0]
         curr_peak_hor_idx = Z_hor_phase_pair_idxs[event_idx][1]
-        curr_event_df = pd.DataFrame({'t1': [t_series_df_Z['t'][curr_peak_Z_idx]], 't2': [t_series_df_hor['t'][curr_peak_hor_idx]], 
-                                            'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
-                                            'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
-                                            'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
-        list_of_curr_event_dfs.append(curr_event_df)
-        print(curr_event_df)
-    
-    events_df = pd.concat(list_of_curr_event_dfs)
+        curr_events['t1'].append(t_series_df_Z['t'][curr_peak_Z_idx])
+        curr_events['t2'].append(t_series_df_hor['t'][curr_peak_hor_idx])
+        curr_events['power1'].append(t_series_df_Z['power'][curr_peak_Z_idx])
+        curr_events['power2'].append(t_series_df_hor['power'][curr_peak_hor_idx])
+        curr_events['slowness1'].append(t_series_df_Z['slowness'][curr_peak_Z_idx])
+        curr_events['slowness2'].append(t_series_df_hor['slowness'][curr_peak_hor_idx])
+        curr_events['bazi1'].append(t_series_df_Z['back_azi'][curr_peak_Z_idx])
+        curr_events['bazi2'].append(t_series_df_hor['back_azi'][curr_peak_hor_idx])
+
+    events_df = pd.DataFrame(curr_events)
     # And tidy:
     del t_Z_secs_after_start, t_hor_secs_after_start, Z_hor_phase_pair_idxs
     gc.collect()
@@ -560,6 +566,7 @@ class setup_detection:
         dt_end = self.endtime.date
         ndays = (dt_end - dt_start).days + 1 
         query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
+        print(query_dates)
         for date in query_dates:
             # Loop over dates within start/end range:
             # Loop over channels:
@@ -611,8 +618,6 @@ class setup_detection:
                         if self.endtime - self.starttime > 60:
                             st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day,  hour=hour, minute=minute), 
                                             endtime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
-                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute))
-                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
                         else:
                             st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
                         time_this_minute_st = st_trimmed[0].stats.starttime
