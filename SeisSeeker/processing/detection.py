@@ -206,10 +206,10 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
         curr_peak_hor_idx = Z_hor_phase_pair_idxs[event_idx][1]
         curr_events['t1'].append(t_series_df_Z['t'][curr_peak_Z_idx])
         curr_events['t2'].append(t_series_df_hor['t'][curr_peak_hor_idx])
-        curr_events['power1'].append(t_series_df_Z['power'][curr_peak_Z_idx])
-        curr_events['power2'].append(t_series_df_hor['power'][curr_peak_hor_idx])
-        curr_events['slowness1'].append(t_series_df_Z['slowness'][curr_peak_Z_idx])
-        curr_events['slowness2'].append(t_series_df_hor['slowness'][curr_peak_hor_idx])
+        curr_events['pow1'].append(t_series_df_Z['power'][curr_peak_Z_idx])
+        curr_events['pow2'].append(t_series_df_hor['power'][curr_peak_hor_idx])
+        curr_events['slow1'].append(t_series_df_Z['slowness'][curr_peak_Z_idx])
+        curr_events['slow2'].append(t_series_df_hor['slowness'][curr_peak_hor_idx])
         curr_events['bazi1'].append(t_series_df_Z['back_azi'][curr_peak_Z_idx])
         curr_events['bazi2'].append(t_series_df_hor['back_azi'][curr_peak_hor_idx])
 
@@ -564,7 +564,8 @@ class setup_detection:
         # Find number of days to run array processing over
         dt_start = self.starttime.date
         dt_end = self.endtime.date
-        ndays = (dt_end - dt_start).days
+        ndays = (dt_end - dt_start).days + 1
+        print(ndays)
         query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
         print(query_dates)
         for date in query_dates:
@@ -969,6 +970,7 @@ class setup_detection:
                         Pxx_curr = 0 
                         idx_diff = Psum_opt.shape[1]            
             dbazi = 360 / Psum_opt.shape[1]
+
             bazi1_err = idx_diff * dbazi
             # ------- End vertical -------
 
@@ -982,7 +984,7 @@ class setup_detection:
                 ax = plt.subplot(projection="polar")
                 ax.set_theta_offset(np.pi/2)
                 ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
+                im = ax.pcolormesh(th, r, Psum_opt/Psum_opt.max(), cmap='inferno')
                 plt.colorbar(im)
                 plt.grid()
                 event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
