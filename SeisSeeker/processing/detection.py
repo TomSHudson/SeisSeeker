@@ -197,17 +197,23 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
     # Organise outputs into useful form:
     if verbosity > 1:
         print("Writing events")
+
+    curr_events = {'t1':[],'t2':[], 'pow1': [], 'pow2':[], 'slow1':[],
+                   'slow2':[], 'bazi1':[], 'bazi2':[]}
+    
     for event_idx in range(len(Z_hor_phase_pair_idxs)):
         curr_peak_Z_idx = Z_hor_phase_pair_idxs[event_idx][0]
         curr_peak_hor_idx = Z_hor_phase_pair_idxs[event_idx][1]
-        curr_event_df = pd.DataFrame({'t1': [t_series_df_Z['t'][curr_peak_Z_idx]], 't2': [t_series_df_hor['t'][curr_peak_hor_idx]], 
-                                            'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
-                                            'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
-                                            'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
-        list_of_curr_event_dfs.append(curr_event_df)
-        print(curr_event_df)
-    
-    events_df = pd.concat(list_of_curr_event_dfs)
+        curr_events['t1'].append(t_series_df_Z['t'][curr_peak_Z_idx])
+        curr_events['t2'].append(t_series_df_hor['t'][curr_peak_hor_idx])
+        curr_events['pow1'].append(t_series_df_Z['power'][curr_peak_Z_idx])
+        curr_events['pow2'].append(t_series_df_hor['power'][curr_peak_hor_idx])
+        curr_events['slow1'].append(t_series_df_Z['slowness'][curr_peak_Z_idx])
+        curr_events['slow2'].append(t_series_df_hor['slowness'][curr_peak_hor_idx])
+        curr_events['bazi1'].append(t_series_df_Z['back_azi'][curr_peak_Z_idx])
+        curr_events['bazi2'].append(t_series_df_hor['back_azi'][curr_peak_hor_idx])
+
+    events_df = pd.DataFrame(curr_events)
     # And tidy:
     del t_Z_secs_after_start, t_hor_secs_after_start, Z_hor_phase_pair_idxs
     gc.collect()
@@ -558,8 +564,10 @@ class setup_detection:
         # Find number of days to run array processing over
         dt_start = self.starttime.date
         dt_end = self.endtime.date
-        ndays = (dt_end - dt_start).days + 1 
+        ndays = (dt_end - dt_start).days + 1
+        print(ndays)
         query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
+        print(query_dates)
         for date in query_dates:
             # Loop over dates within start/end range:
             # Loop over channels:
@@ -611,8 +619,6 @@ class setup_detection:
                         if self.endtime - self.starttime > 60:
                             st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day,  hour=hour, minute=minute), 
                                             endtime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
-                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute))
-                            print(obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
                         else:
                             st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
                         time_this_minute_st = st_trimmed[0].stats.starttime
@@ -730,7 +736,7 @@ class setup_detection:
                     for tr in st_tmp:
                         st.append(tr)
                 except:
-                    print("No data for "+station+", channel = "+channel+". Skipping this data.")
+                    print(f"No data for {station}, channel = {channel}, timestamp {timestamp}. Skipping this data.")
                     # print(full_fname)
                     continue
         # Merge data:
@@ -964,11 +970,12 @@ class setup_detection:
                         Pxx_curr = 0 
                         idx_diff = Psum_opt.shape[1]            
             dbazi = 360 / Psum_opt.shape[1]
+
             bazi1_err = idx_diff * dbazi
             # ------- End vertical -------
 
             # Plot slowness space that used for uncertainty, if specified:
-            if verbosity > 1:
+            if verbosity >= 1:
                 fig = plt.figure()
                 Axes3D(fig)
                 rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
@@ -977,10 +984,13 @@ class setup_detection:
                 ax = plt.subplot(projection="polar")
                 ax.set_theta_offset(np.pi/2)
                 ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
+                im = ax.pcolormesh(th, r, Psum_opt/Psum_opt.max(), cmap='inferno')
                 plt.colorbar(im)
                 plt.grid()
-                plt.show()
+                event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
+                event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
+                fig.savefig(f'{self.outdir}/plots/vespagrams/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
+                plt.close()
 
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
@@ -1053,7 +1063,7 @@ class setup_detection:
             # ------- End horizontal -------
             
             # Plot slowness space that used for uncertainty, if specified:
-            if verbosity > 1:
+            if verbosity >= 1:
                 fig = plt.figure()
                 Axes3D(fig)
                 rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
@@ -1065,8 +1075,8 @@ class setup_detection:
                 im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
                 plt.colorbar(im)
                 plt.grid()
-                plt.show()
-
+                fig.savefig(f'{self.outdir}/plots/vespagrams/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_horz.png', dpi=600)
+                plt.close()
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
@@ -1083,7 +1093,7 @@ class setup_detection:
         return events_df
     
     
-    def detect_events(self, verbosity=0):
+    def detect_events(self, verbosity=0, fnames=None):
         """Function to detect events, based on the power time-series generated 
         by run_array_proc(). Note: Currently, only Median Absolute Deviation 
         triggering is implemented.
@@ -1092,11 +1102,13 @@ class setup_detection:
         - mad_multiplier
         - min_event_sep_s
         """
-        print("Note: <mad_window_length_s> not yet implemented.")
+        # print("Note: <mad_window_length_s> not yet implemented.")
         # Create datastore:
         events_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
-        for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
+        if fnames is None:
+            fnames = glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv"))
+        for fname in fnames:
             f_uid = fname[-21:-8]
             # Check if in list to process:
             if fname in self.out_fnames_array_proc:
@@ -1179,7 +1191,7 @@ class setup_detection:
                 print("Event phase associations:")            
                 print(events_df)
                 print("="*40)
-                fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(6,4))
+                fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(9,6))
                 # Plot power:
                 ax[0].plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
                 ax[0].plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
@@ -1202,7 +1214,9 @@ class setup_detection:
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
                 for i in range(3):
                     ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
+                fig.savefig(f'{self.outdir}/plots/detection_t_series/Phase_assocaition_{f_uid}.png', dpi=600)
                 plt.show()
+
         
         return events_df_all
     
