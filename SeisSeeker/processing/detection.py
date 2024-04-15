@@ -198,8 +198,8 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
     if verbosity > 1:
         print("Writing events")
 
-    curr_events = {'t1':[],'t2':[], 'power1': [], 'power2':[], 'slowness1':[],
-                   'slowness2':[], 'bazi1':[], 'bazi2':[]}
+    curr_events = {'t1':[],'t2':[], 'pow1': [], 'pow2':[], 'slow1':[],
+                   'slow2':[], 'bazi1':[], 'bazi2':[]}
     
     for event_idx in range(len(Z_hor_phase_pair_idxs)):
         curr_peak_Z_idx = Z_hor_phase_pair_idxs[event_idx][0]
@@ -736,7 +736,7 @@ class setup_detection:
                     for tr in st_tmp:
                         st.append(tr)
                 except:
-                    print("No data for "+station+", channel = "+channel+". Skipping this data.")
+                    print(f"No data for {station}, channel = {channel}, timestamp {timestamp}. Skipping this data.")
                     # print(full_fname)
                     continue
         # Merge data:
