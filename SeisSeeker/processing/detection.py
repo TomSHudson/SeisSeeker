@@ -721,7 +721,7 @@ class setup_detection:
     def _load_day_of_data(self, year, month, day, hour=None):
         """Function to load a day of data."""
         # Load in data:
-        mseed_dir = PurePath.join(self.archivedir, str(year), str(month).zfill(2), str(day).zfill(2))
+        mseed_dir = Path(self.archivedir, str(year), str(month).zfill(2), str(day).zfill(2))
         # print(mseed_dir)
         st = obspy.Stream()
         for index, row in self.stations_df.iterrows():
