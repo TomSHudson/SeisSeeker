@@ -992,7 +992,7 @@ class setup_detection:
                 event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
                 vesp_figpath = Path(self.outdir, 'plots', ' vespagrams')
                 vesp_figpath.mkdir(parents=True, exist_ok=True) # makes plots/vespagrams if it doesnt exist
-                fig.savefig('{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
+                fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
                 plt.close()
 
             # ------- For horizontal -------:
