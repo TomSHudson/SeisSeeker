@@ -50,7 +50,9 @@ def xy_to_rtheta(x,y):
 
 
 @jit(nopython=True, parallel=True)#, nogil=True)
-def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
+def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n_baz, fs, target_freqs, xx, yy,
+                                 n_stations, n_t_samp, remove_autocorr,
+                                 ):
     """Function to perform array processing fast due to being designed to 
     be wrapped using Numba. Function inspired by Bowden et al. (2021).
     Performs array processing in polar coordinates.
@@ -60,25 +62,23 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
     # Define grid of slownesses:
     # number of pixes in x and y
     # (Determines number of phase shifts to perform)
-    n_ur = 26 #51 #101
-    n_utheta = 120 #51 #101
-    ur = np.linspace(0,max_sl,n_ur)
-    utheta = np.linspace(0,360-(360/n_utheta),n_utheta)
+    ur = np.linspace(min_sl,max_sl,n_sl, endpoint=True)
+    utheta = np.linspace(min_baz, max_baz, n_baz, endpoint=True)
     utheta_rad = np.deg2rad(utheta)
     dur=ur[1]-ur[0]
     dutheta=utheta[1]-utheta[0]
 
     # Compute time-shifts once:
     # (so that don't have to do it for every frequency)
-    tlib = np.zeros((n_stations,n_ur,n_utheta), dtype=np.complex128)
-    for ir in range(0,n_ur):
-            for itheta in range(0,n_utheta):
+    tlib = np.zeros((n_stations,n_sl,n_baz), dtype=np.complex128)
+    for ir in range(0,n_sl):
+            for itheta in range(0,n_baz):
                 # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
                 tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
     # Since receivers are relative to the array centre, can shift all receivers back to that centre.
 
     # Create data stores:
-    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_ur,n_utheta), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
+    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_sl,n_baz), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
 
     # Then loop over windows:
     for win_idx in prange(data.shape[0]):
@@ -99,7 +99,7 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             Pxx_all[:,sta_idx] = Pxx_curr
 
         # Loop over all freqs, performing phase shifts:
-        Pfreq=np.zeros((len(target_freqs),n_ur,n_utheta),dtype=np.complex128)
+        Pfreq=np.zeros((len(target_freqs),n_sl,n_baz),dtype=np.complex128)
         counter_grid = 0
         for ii in range(len(target_freqs)):
             # Find closest current freq.:
@@ -118,8 +118,8 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
                             Rxx[i1,i2] = 0
 
             # And loop over phase shifts, calculating cross-correlation power:
-            for ir in range(0,n_ur):
-                for itheta in range(0,n_utheta):
+            for ir in range(0,n_sl):
+                for itheta in range(0,n_baz):
                     timeshifts = tlib[:,ir,itheta] # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
                     a = np.exp(-1j*2*np.pi*target_f*timeshifts) # (a is a steering vector, to allign all traces with array centre)
                     aconj = np.conj(a)
@@ -752,7 +752,7 @@ class setup_detection:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
             st.trim(endtime=self.endtime)
-        return st 
+        return st.normalize()
 
     
     def _convert_st_to_np_data(self, st):
