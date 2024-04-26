@@ -531,7 +531,12 @@ class setup_detection:
         self.freqmin = None
         self.freqmax = None
         self.num_freqs = 100
+        self.min_sl = 0
         self.max_sl = 1.0
+        self.n_sl = 51
+        self.min_baz = 0
+        self.max_baz = 360
+        self.n_baz = 181
         self.win_len_s = 0.1
         self.win_step_inc_s = 0.1 # (Note: Default is to step with no overlap)
         self.remove_autocorr = True
@@ -846,8 +851,8 @@ class setup_detection:
         if verbosity>1:
             print("Performing run for",data.shape[0],"windows")
             tic = time.time()
-        Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
-                                                        self.n_stations, self.n_t_samp, self.remove_autocorr)
+        Pfreq_all = _fast_freq_domain_array_proc(data, self.min_sl, self.max_sl, self.n_sl, self.min_baz, self.max_baz, self.n_baz,
+                                                 self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)
         if verbosity>1:
             toc = time.time()
             print(toc-tic)
