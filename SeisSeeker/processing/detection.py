@@ -806,8 +806,6 @@ class setup_detection:
         # Calcualte ux, uy:
         ur = np.linspace(0, self.max_sl,Psum_all.shape[1])
         utheta = utheta = np.linspace(0,360-(360/Psum_all.shape[2]),Psum_all.shape[2])
-        dur=ur[1]-ur[0]
-        dutheta=utheta[1]-utheta[0]
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
         t_series = np.arange(self.win_step_inc_s/2,(n_win_curr*self.win_step_inc_s) + (self.win_step_inc_s/2), self.win_step_inc_s)
