@@ -62,8 +62,8 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
     # Define grid of slownesses:
     # number of pixes in x and y
     # (Determines number of phase shifts to perform)
-    ur = np.linspace(min_sl,max_sl,n_sl, endpoint=True)
-    utheta = np.linspace(min_baz, max_baz, n_baz, endpoint=True)
+    ur = np.linspace(min_sl,max_sl,n_sl)
+    utheta = np.linspace(min_baz, max_baz, n_baz)
     utheta_rad = np.deg2rad(utheta)
     dur=ur[1]-ur[0]
     dutheta=utheta[1]-utheta[0]
