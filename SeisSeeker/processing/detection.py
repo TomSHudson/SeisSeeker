@@ -50,7 +50,9 @@ def xy_to_rtheta(x,y):
 
 
 @jit(nopython=True, parallel=True)#, nogil=True)
-def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
+def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n_baz, fs, target_freqs, xx, yy,
+                                 n_stations, n_t_samp, remove_autocorr,
+                                 ):
     """Function to perform array processing fast due to being designed to 
     be wrapped using Numba. Function inspired by Bowden et al. (2021).
     Performs array processing in polar coordinates.
@@ -60,25 +62,23 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
     # Define grid of slownesses:
     # number of pixes in x and y
     # (Determines number of phase shifts to perform)
-    n_ur = 26 #51 #101
-    n_utheta = 120 #51 #101
-    ur = np.linspace(0,max_sl,n_ur)
-    utheta = np.linspace(0,360-(360/n_utheta),n_utheta)
+    ur = np.linspace(min_sl,max_sl,n_sl)
+    utheta = np.linspace(min_baz, max_baz, n_baz)
     utheta_rad = np.deg2rad(utheta)
     dur=ur[1]-ur[0]
     dutheta=utheta[1]-utheta[0]
 
     # Compute time-shifts once:
     # (so that don't have to do it for every frequency)
-    tlib = np.zeros((n_stations,n_ur,n_utheta), dtype=np.complex128)
-    for ir in range(0,n_ur):
-            for itheta in range(0,n_utheta):
+    tlib = np.zeros((n_stations,n_sl,n_baz), dtype=np.complex128)
+    for ir in range(0,n_sl):
+            for itheta in range(0,n_baz):
                 # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
                 tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
     # Since receivers are relative to the array centre, can shift all receivers back to that centre.
 
     # Create data stores:
-    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_ur,n_utheta), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
+    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_sl,n_baz), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
 
     # Then loop over windows:
     for win_idx in prange(data.shape[0]):
@@ -99,7 +99,7 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             Pxx_all[:,sta_idx] = Pxx_curr
 
         # Loop over all freqs, performing phase shifts:
-        Pfreq=np.zeros((len(target_freqs),n_ur,n_utheta),dtype=np.complex128)
+        Pfreq=np.zeros((len(target_freqs),n_sl,n_baz),dtype=np.complex128)
         counter_grid = 0
         for ii in range(len(target_freqs)):
             # Find closest current freq.:
@@ -118,8 +118,8 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
                             Rxx[i1,i2] = 0
 
             # And loop over phase shifts, calculating cross-correlation power:
-            for ir in range(0,n_ur):
-                for itheta in range(0,n_utheta):
+            for ir in range(0,n_sl):
+                for itheta in range(0,n_baz):
                     timeshifts = tlib[:,ir,itheta] # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
                     a = np.exp(-1j*2*np.pi*target_f*timeshifts) # (a is a steering vector, to allign all traces with array centre)
                     aconj = np.conj(a)
@@ -531,7 +531,12 @@ class setup_detection:
         self.freqmin = None
         self.freqmax = None
         self.num_freqs = 100
+        self.min_sl = 0
         self.max_sl = 1.0
+        self.n_sl = 51
+        self.min_baz = 0
+        self.max_baz = 360
+        self.n_baz = 181
         self.win_len_s = 0.1
         self.win_step_inc_s = 0.1 # (Note: Default is to step with no overlap)
         self.remove_autocorr = True
@@ -752,7 +757,7 @@ class setup_detection:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
             st.trim(endtime=self.endtime)
-        return st 
+        return st.normalize()
 
     
     def _convert_st_to_np_data(self, st):
@@ -806,8 +811,6 @@ class setup_detection:
         # Calcualte ux, uy:
         ur = np.linspace(0, self.max_sl,Psum_all.shape[1])
         utheta = utheta = np.linspace(0,360-(360/Psum_all.shape[2]),Psum_all.shape[2])
-        dur=ur[1]-ur[0]
-        dutheta=utheta[1]-utheta[0]
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
         t_series = np.arange(self.win_step_inc_s/2,(n_win_curr*self.win_step_inc_s) + (self.win_step_inc_s/2), self.win_step_inc_s)
@@ -848,8 +851,8 @@ class setup_detection:
         if verbosity>1:
             print("Performing run for",data.shape[0],"windows")
             tic = time.time()
-        Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
-                                                        self.n_stations, self.n_t_samp, self.remove_autocorr)
+        Pfreq_all = _fast_freq_domain_array_proc(data, self.min_sl, self.max_sl, self.n_sl, self.min_baz, self.max_baz, self.n_baz,
+                                                 self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)
         if verbosity>1:
             toc = time.time()
             print(toc-tic)
@@ -877,6 +880,30 @@ class setup_detection:
         mad = np.median(np.abs(x - np.median(x)))
         return scale * mad
 
+
+    def plot_polar_slowness_space(self, beam_power, event_phase_arr_time, component, log=False):
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='polar')
+        rad = np.linspace(self.min_sl, self.max_sl, beam_power.shape[0])
+        azm = np.linspace(np.radians(self.min_baz), 
+                            np.radians(self.max_baz), beam_power.shape[1])
+        th, r = np.meshgrid(azm, rad)
+        ax.set_theta_offset(np.pi/2)
+        ax.set_theta_direction(-1)
+        if log:
+            im = ax.pcolormesh(th, r, np.log(beam_power), cmap='magma')
+        else:
+            im = ax.pcolormesh(th, r, beam_power, cmap='magma')
+
+        plt.colorbar(im)
+        plt.grid()
+        event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
+        event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
+        vesp_figpath = Path(self.outdir, 'plots', ' vespagrams')
+        vesp_figpath.mkdir(parents=True, exist_ok=True) # makes plots/vespagrams if it doesnt exist
+        fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_{component}.png', dpi=600)
+        plt.close()
     
     def _calc_uncertainties(self, events_df, t_series_df_Z, t_series_df_hor, verbosity=0):
         """Function to calculate uncertainties for phase-associated event detections.
@@ -977,24 +1004,7 @@ class setup_detection:
 
             # Plot slowness space that used for uncertainty, if specified:
             if verbosity >= 1:
-                fig = plt.figure()
-                Axes3D(fig)
-                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
-                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
-                th, r = np.meshgrid(azm, rad)
-                ax = plt.subplot(projection="polar")
-                ax.set_theta_offset(np.pi/2)
-                ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt/Psum_opt.max(), cmap='inferno')
-                plt.colorbar(im)
-                plt.grid()
-                event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
-                event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
-                vesp_figpath = Path(self.outdir, 'plots', ' vespagrams')
-                vesp_figpath.mkdir(parents=True, exist_ok=True) # makes plots/vespagrams if it doesnt exist
-                fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
-                plt.close()
-
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz', log=True)
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
             # (only use ascending currently (assume symetric pdf))
@@ -1067,19 +1077,7 @@ class setup_detection:
             
             # Plot slowness space that used for uncertainty, if specified:
             if verbosity >= 1:
-                fig = plt.figure()
-                Axes3D(fig)
-                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
-                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
-                th, r = np.meshgrid(azm, rad)
-                ax = plt.subplot(projection="polar")
-                ax.set_theta_offset(np.pi/2)
-                ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
-                plt.colorbar(im)
-                plt.grid()
-                fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_horz.png', dpi=600)
-                plt.close()
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz', log=True)
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
@@ -1094,8 +1092,7 @@ class setup_detection:
         events_df = pd.concat([events_df, uncertainties_df], axis=1)
 
         return events_df
-    
-    
+
     def detect_events(self, verbosity=0, fnames=None):
         """Function to detect events, based on the power time-series generated 
         by run_array_proc(). Note: Currently, only Median Absolute Deviation 
