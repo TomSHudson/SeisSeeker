@@ -1004,7 +1004,7 @@ class setup_detection:
 
             # Plot slowness space that used for uncertainty, if specified:
             if verbosity >= 1:
-                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz', log=True)
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz')
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
             # (only use ascending currently (assume symetric pdf))
@@ -1077,7 +1077,7 @@ class setup_detection:
             
             # Plot slowness space that used for uncertainty, if specified:
             if verbosity >= 1:
-                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz', log=True)
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz')
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
