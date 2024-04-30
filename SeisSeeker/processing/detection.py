@@ -880,6 +880,30 @@ class setup_detection:
         mad = np.median(np.abs(x - np.median(x)))
         return scale * mad
 
+
+    def plot_polar_slowness_space(self, beam_power, event_phase_arr_time, component, log=False):
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='polar')
+        rad = np.linspace(self.min_sl, self.max_sl, beam_power.shape[0])
+        azm = np.linspace(np.radians(self.min_baz), 
+                            np.radians(self.max_baz), beam_power.shape[1])
+        th, r = np.meshgrid(azm, rad)
+        ax.set_theta_offset(np.pi/2)
+        ax.set_theta_direction(-1)
+        if log:
+            im = ax.pcolormesh(th, r, np.log(beam_power), cmap='magma')
+        else:
+            im = ax.pcolormesh(th, r, beam_power, cmap='magma')
+
+        plt.colorbar(im)
+        plt.grid()
+        event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
+        event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
+        vesp_figpath = Path(self.outdir, 'plots', ' vespagrams')
+        vesp_figpath.mkdir(parents=True, exist_ok=True) # makes plots/vespagrams if it doesnt exist
+        fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_{component}.png', dpi=600)
+        plt.close()
     
     def _calc_uncertainties(self, events_df, t_series_df_Z, t_series_df_hor, verbosity=0):
         """Function to calculate uncertainties for phase-associated event detections.
@@ -980,24 +1004,7 @@ class setup_detection:
 
             # Plot slowness space that used for uncertainty, if specified:
             if verbosity >= 1:
-                fig = plt.figure()
-                Axes3D(fig)
-                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
-                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
-                th, r = np.meshgrid(azm, rad)
-                ax = plt.subplot(projection="polar")
-                ax.set_theta_offset(np.pi/2)
-                ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt/Psum_opt.max(), cmap='inferno')
-                plt.colorbar(im)
-                plt.grid()
-                event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
-                event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
-                vesp_figpath = Path(self.outdir, 'plots', ' vespagrams')
-                vesp_figpath.mkdir(parents=True, exist_ok=True) # makes plots/vespagrams if it doesnt exist
-                fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_vert.png', dpi=600)
-                plt.close()
-
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz', log=True)
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
             # (only use ascending currently (assume symetric pdf))
@@ -1070,19 +1077,7 @@ class setup_detection:
             
             # Plot slowness space that used for uncertainty, if specified:
             if verbosity >= 1:
-                fig = plt.figure()
-                Axes3D(fig)
-                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
-                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
-                th, r = np.meshgrid(azm, rad)
-                ax = plt.subplot(projection="polar")
-                ax.set_theta_offset(np.pi/2)
-                ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
-                plt.colorbar(im)
-                plt.grid()
-                fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_horz.png', dpi=600)
-                plt.close()
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz', log=True)
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
@@ -1097,8 +1092,7 @@ class setup_detection:
         events_df = pd.concat([events_df, uncertainties_df], axis=1)
 
         return events_df
-    
-    
+
     def detect_events(self, verbosity=0, fnames=None):
         """Function to detect events, based on the power time-series generated 
         by run_array_proc(). Note: Currently, only Median Absolute Deviation 
