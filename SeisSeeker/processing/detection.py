@@ -595,10 +595,8 @@ class setup_detection:
                     data_store = {'t': [], 'power': [], 'slowness': [], 'back_azi': []}
 
                     # Load data:
-                    st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
                     try:
-                        starttime_this_st = st[0].stats.starttime
-                        #need a better test for this
+                        st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
                     except IndexError:
                         # And skip if no data:
                         print("Skipping hour as no data")
