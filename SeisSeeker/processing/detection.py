@@ -651,7 +651,7 @@ class setup_detection:
                     store_df.reset_index(drop=True, inplace=True)
 
                     # And save data out:
-                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{starttime_this_st.hour:02d}00_ch{self.channel_curr[-1]}.csv'
+                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
                     out_fname = os.path.join(self.outdir, outfile)
                     store_df.to_csv(out_fname, index=False)
 
