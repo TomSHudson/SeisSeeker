@@ -168,7 +168,6 @@ def _phase_associator_core_worker(peaks_Z, peaks_hor, bazis_Z, bazis_hor, bazi_t
     
     return Z_hor_phase_pair_idxs
 
-
 def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_tol, filt_phase_assoc_by_max_power, max_phase_sep_s, min_event_sep_s, verbosity=0):
     """
     Function to perform phase association for numba implementation.
@@ -384,7 +383,6 @@ def _create_stacked_data_st(st, Z_all, N_all, E_all):
     gc.collect()
 
     return composite_st
-
 
 class setup_detection:
     """
@@ -808,7 +806,6 @@ class setup_detection:
                     data[i,j,:] = 0.
         return data 
 
-    
     def _stack_results(self, Pfreq_all):
         """Function to perform stacking of the results."""
         Psum_all = np.zeros((Pfreq_all.shape[0], Pfreq_all.shape[2], Pfreq_all.shape[3]), dtype=complex)
@@ -820,7 +817,6 @@ class setup_detection:
             else:
                 Psum_all[i,:,:] = np.sum(Pfreq_all[i,:,:,:],axis=0)
         return Psum_all
-
 
     def _find_time_series(self, Psum_all):
         """Function to calculate beamforming time-series outputs, given 
@@ -902,7 +898,6 @@ class setup_detection:
         # Calculate median and mad values:
         mad = np.median(np.abs(x - np.median(x)))
         return scale * mad
-
 
     def plot_polar_slowness_space(self, beam_power, event_phase_arr_time, component, log=False):
 
