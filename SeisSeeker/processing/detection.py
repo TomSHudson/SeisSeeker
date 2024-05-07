@@ -512,7 +512,7 @@ class setup_detection:
 
         """
         # Initialise input params:
-        self.archivedir = archivedir
+        self.archivedir = Path(archivedir)
         self.outdir = outdir
         self.stations_fname = stations_fname
         self.starttime = starttime
@@ -570,9 +570,7 @@ class setup_detection:
         dt_start = self.starttime.date
         dt_end = self.endtime.date
         ndays = (dt_end - dt_start).days + 1
-        print(ndays)
         query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
-        print(query_dates)
         for date in query_dates:
             # Loop over dates within start/end range:
             # Loop over channels:
@@ -584,18 +582,25 @@ class setup_detection:
                 for hour in range(24):
                     # Loop over every hour in every day..
                     print(f"Processing for hour: {hour:02d}")
+                    # Make outfile
+                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
+                    if ((self.outdir / outfile).is_file()) & (self.overwrite):
+                        print(f'{outfile} exists in {self.archivedir}')
+                        print('Move to next hour')
+                        continue
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
                     if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
                         continue
 
-                    # Create datastore:
-                    store_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
+                    # Create datastores:
+                    data_store = {'t': [], 'power': [], 'slowness': [], 'back_azi': []}
 
                     # Load data:
-                    st = self._load_day_of_data(year=date.year, month=date.month, day=date.day, hour=hour)
+                    st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
                     try:
                         starttime_this_st = st[0].stats.starttime
+                        #need a better test for this
                     except IndexError:
                         # And skip if no data:
                         print("Skipping hour as no data")
@@ -622,8 +627,16 @@ class setup_detection:
                         else:
                             self.win_pad_s = 0.
                         if self.endtime - self.starttime > 60:
-                            st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day,  hour=hour, minute=minute), 
-                                            endtime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
+                            st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year,
+                                                                        month=date.month,
+                                                                        day=date.day,
+                                                                        hour=hour,
+                                                                        minute=minute),
+                                            endtime=obspy.UTCDateTime(year=date.year,
+                                                                      month=date.month,
+                                                                      day=date.day,
+                                                                      hour=hour,
+                                                                      minute=minute)+60+self.win_pad_s)
                         else:
                             st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
                         time_this_minute_st = st_trimmed[0].stats.starttime
@@ -641,25 +654,24 @@ class setup_detection:
                         for t_serie in t_series:
                             t_series_out.append( str(time_this_minute_st + t_serie) )
 
-                        tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                        store_df = pd.concat([store_df, tmp_df])
+                        data_store['t'].append(t_series_out)
+                        data_store['power'].append(powers)
+                        data_store['slowness'].append(slownesses)
+                        data_store['back_azi'].append(back_azis)
 
                         # And clear memory:
                         del Psum_all, t_series, powers, slownesses, back_azis
                         gc.collect()
 
-                    store_df.reset_index(drop=True, inplace=True)
-
                     # And save data out:
-                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{starttime_this_st.hour:02d}00_ch{self.channel_curr[-1]}.csv'
                     out_fname = os.path.join(self.outdir, outfile)
+                    #make DataFrame "just-in-time" as it is more efficient this way
+                    store_df = pd.DataFrame(data_store)
                     store_df.to_csv(out_fname, index=False)
 
                     # And append fname to history:
                     self.out_fnames_array_proc.append(out_fname)
-
-
-                        
+              
         return None
 
     def _setup_array_receiver_coords(self):
@@ -723,8 +735,28 @@ class setup_detection:
         print("="*60)
 
 
-    def _load_day_of_data(self, year, month, day, hour=None):
-        """Function to load a day of data."""
+    def _load_data(self, year, month, day, hour=None):
+        """
+        Function to load data. If no hour is specified the whole day will be read in.
+        Otherwise the hour of data will be loaded.
+
+        Parameters
+        ----------
+
+        year : int
+            year to load data for (yyyy)
+        month : int 
+            month to load data for. Leading 0's will be added.        
+        day : int 
+            day to load data for. Leading 0's will be added.
+        hour : int, Optional
+            hour to load data for. Leading 0's will be added.
+        
+        Returns:
+        ----------
+        data : obspy.Stream
+            Waveform data for requested date and time.
+        """
         # Load in data:
         mseed_dir = Path(self.archivedir, str(year), str(month).zfill(2), str(day).zfill(2))
         # print(mseed_dir)
@@ -733,17 +765,16 @@ class setup_detection:
             # [J Asplet - think about replacing station DataFrame with StatonXML object]
             station = row['Name']
             for channel in self.channels_to_use:
-                if hour:
-                    timestamp = f'{year:02d}{month:02d}{day:02d}T{hour:02d}0000'                        
+                if hour is None:
+                    timestamp = f'{year:02d}{month:02d}{day:02d}T*'          
                 else:
-                    timestamp = f'{year:02d}{month:02d}{day:02d}T*'
+                    timestamp = f'{year:02d}{month:02d}{day:02d}T{hour:02d}0000'
                 try:
                     st_tmp = obspy.read(f'{mseed_dir}/{timestamp}_{station}_{channel}.mseed')
                     for tr in st_tmp:
                         st.append(tr)
                 except:
                     print(f"No data for {station}, channel = {channel}, timestamp {timestamp}. Skipping this data.")
-                    # print(full_fname)
                     continue
         # Merge data:
         st.detrend('demean')
@@ -752,7 +783,7 @@ class setup_detection:
         if self.freqmin:
             if self.freqmax:
                 st.filter('bandpass', freqmin=self.freqmin, freqmax=self.freqmax)
-        # And trim data, if some lies outside start and end times:
+        # And trim data, if some lies outside start and end time of beamforming period:
         if self.starttime > st[0].stats.starttime:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
@@ -930,7 +961,8 @@ class setup_detection:
             # (done like this to avoid unnneccessary read ins, improving eff.)
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             if count == 0:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.month, event_phase_arr_time.day, hour=event_phase_arr_time.hour)
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)
 
             # Find uncertainties:
             # ------- For vertical -------:
@@ -952,7 +984,8 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.month, event_phase_arr_time.day, hour=event_phase_arr_time.hour)   
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)   
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1023,7 +1056,8 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t2'])
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.month, event_phase_arr_time.day, hour=event_phase_arr_time.hour)            
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)            
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1388,7 +1422,8 @@ class setup_detection:
             If True, returns st and composite_st. Optional. Default = False.  
         """
         # Load in raw mseed data:
-        st = self._load_day_of_data(arrival_time.year, arrival_time.month, arrival_time.day, hour=arrival_time.hour)
+        st = self._load_data(arrival_time.year, arrival_time.month,
+                             arrival_time.day, hour=arrival_time.hour)
         # And trim data:
         st.trim(starttime=arrival_time-t_before_s, endtime=arrival_time+t_after_s)
 
