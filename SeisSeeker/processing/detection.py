@@ -582,7 +582,7 @@ class setup_detection:
                     print(f"Processing for hour: {hour:02d}")
                     # Make outfile
                     outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
-                    if ((self.outdir / outfile).is_file()) & (self.overwrite):
+                    if ((self.outdir / outfile).is_file()) & (self.skip_existing):
                         print(f'{outfile} exists in {self.archivedir}')
                         print('Move to next hour')
                         continue
