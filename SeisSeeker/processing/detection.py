@@ -627,8 +627,16 @@ class setup_detection:
                         else:
                             self.win_pad_s = 0.
                         if self.endtime - self.starttime > 60:
-                            st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day,  hour=hour, minute=minute), 
-                                            endtime=obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute)+60+self.win_pad_s)
+                            st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year,
+                                                                        month=date.month,
+                                                                        day=date.day,
+                                                                        hour=hour,
+                                                                        minute=minute),
+                                            endtime=obspy.UTCDateTime(year=date.year,
+                                                                      month=date.month,
+                                                                      day=date.day,
+                                                                      hour=hour,
+                                                                      minute=minute)+60+self.win_pad_s)
                         else:
                             st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
                         time_this_minute_st = st_trimmed[0].stats.starttime
