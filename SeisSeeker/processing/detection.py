@@ -511,7 +511,7 @@ class setup_detection:
         """
         # Initialise input params:
         self.archivedir = Path(archivedir)
-        self.outdir = outdir
+        self.outdir = Path(outdir)
         self.stations_fname = stations_fname
         self.starttime = starttime
         self.endtime = endtime
