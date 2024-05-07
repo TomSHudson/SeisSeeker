@@ -723,8 +723,15 @@ class setup_detection:
         print("="*60)
 
 
-    def _load_day_of_data(self, year, month, day, hour=None):
-        """Function to load a day of data."""
+    def _load_data(self, data_datetime, whole_day=False):
+        """
+        Function to load a day of data.
+        
+        """
+        year = data_datetime.year
+        month = data_datetime.month
+        day = data_datetime.day
+        
         # Load in data:
         mseed_dir = Path(self.archivedir, str(year), str(month).zfill(2), str(day).zfill(2))
         # print(mseed_dir)
@@ -733,17 +740,17 @@ class setup_detection:
             # [J Asplet - think about replacing station DataFrame with StatonXML object]
             station = row['Name']
             for channel in self.channels_to_use:
-                if hour:
-                    timestamp = f'{year:02d}{month:02d}{day:02d}T{hour:02d}0000'                        
+                if whole_day:
+                    timestamp = f'{year:02d}{month:02d}{day:02d}T*'          
                 else:
-                    timestamp = f'{year:02d}{month:02d}{day:02d}T*'
+                    hour = data_datetime.hour
+                    timestamp = f'{year:02d}{month:02d}{day:02d}T{hour:02d}0000'
                 try:
                     st_tmp = obspy.read(f'{mseed_dir}/{timestamp}_{station}_{channel}.mseed')
                     for tr in st_tmp:
                         st.append(tr)
                 except:
                     print(f"No data for {station}, channel = {channel}, timestamp {timestamp}. Skipping this data.")
-                    # print(full_fname)
                     continue
         # Merge data:
         st.detrend('demean')
@@ -752,7 +759,7 @@ class setup_detection:
         if self.freqmin:
             if self.freqmax:
                 st.filter('bandpass', freqmin=self.freqmin, freqmax=self.freqmax)
-        # And trim data, if some lies outside start and end times:
+        # And trim data, if some lies outside start and end time of beamforming period:
         if self.starttime > st[0].stats.starttime:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
