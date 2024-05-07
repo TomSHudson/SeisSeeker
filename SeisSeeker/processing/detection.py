@@ -20,13 +20,14 @@ import datetime
 from scipy.signal import find_peaks
 from numba import jit, objmode, prange, set_num_threads
 import gc 
+import logging
 # import multiprocessing as mp
 import time 
 import glob 
 import pickle
 from SeisSeeker.processing import lookup_table_manager, location 
 
-
+logger = logging.getLogger(__name__)
 
 #----------------------------------------------- Define main functions -----------------------------------------------
 class CustomError(Exception):
@@ -182,7 +183,7 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
     # Perform core phae association:
     # Prep. data for numba format:
     if verbosity > 1:
-        print("Pre-processing time-series")
+        logger.info("Pre-processing time-series")
     t_Z_secs_after_start = []
     for index, row in t_series_df_Z.iterrows():
         t_Z_secs_after_start.append(obspy.UTCDateTime(row['t']) - obspy.UTCDateTime(t_series_df_Z['t'][0]))
@@ -191,11 +192,11 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
         t_hor_secs_after_start.append(obspy.UTCDateTime(row['t']) - obspy.UTCDateTime(t_series_df_hor['t'][0]))
     # Run function:
     if verbosity > 1:
-        print("Performing phase association")
+        logger.info("Performing phase association")
     Z_hor_phase_pair_idxs = _phase_associator_core_worker(peaks_Z, peaks_hor, bazis_Z, bazis_hor, bazi_tol, t_Z_secs_after_start, t_hor_secs_after_start, max_phase_sep_s)
     # Organise outputs into useful form:
     if verbosity > 1:
-        print("Writing events")
+        logger.info("Writing events")
 
     curr_events = {'t1':[],'t2':[], 'pow1': [], 'pow2':[], 'slow1':[],
                    'slow2':[], 'bazi1':[], 'bazi2':[]}
@@ -415,6 +416,9 @@ class setup_detection:
     Attributes
     ----------
 
+    skip_existing : float
+        If True, then skip exisitng detection time series in outdir. Default is True.
+
     freqmin : float
         If specified, lower frequency of bandpass filter, in Hz. Default is None.
 
@@ -526,6 +530,7 @@ class setup_detection:
 
         # And define attributes:
         # For array processing:
+        self.skip_existing = True
         self.freqmin = None
         self.freqmax = None
         self.num_freqs = 100
@@ -573,18 +578,17 @@ class setup_detection:
             # Loop over dates within start/end range:
             # Loop over channels:
             for self.channel_curr in self.channels_to_use:
-                print("="*60)
-                print(f"Processing data for day {date}, channel {self.channel_curr}")
+                logger.info("="*60)
+                logger.info(f"Processing data for day {date}, channel {self.channel_curr}")
                 # And process for individual hours:
                 # (to reduce memory usage)
                 for hour in range(24):
                     # Loop over every hour in every day..
-                    print(f"Processing for hour: {hour:02d}")
                     # Make outfile
                     outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
                     if ((self.outdir / outfile).is_file()) & (self.skip_existing):
-                        print(f'{outfile} exists in {self.archivedir}')
-                        print('Move to next hour')
+                        logger.warning(f'{outfile} exists in {self.archivedir}')
+                        logger.warning('Move to next hour')
                         continue
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
@@ -599,7 +603,7 @@ class setup_detection:
                         st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
                     except IndexError:
                         # And skip if no data:
-                        print("Skipping hour as no data")
+                        logger.exception("Skipping hour as no data")
                         del st 
                         gc.collect()
                         continue
@@ -644,7 +648,6 @@ class setup_detection:
 
                         # Calculate time-series outputs (for detection) from data:
                         t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
-                        
                         # And append to data out:
                         t_series_out = []
                         for t_serie in t_series:
@@ -770,7 +773,7 @@ class setup_detection:
                     for tr in st_tmp:
                         st.append(tr)
                 except:
-                    print(f"No data for {station}, channel = {channel}, timestamp {timestamp}. Skipping this data.")
+                    logger.exception(f"No data for {station}, channel = {channel}, timestamp {timestamp}. Skipping this data.")
                     continue
         # Merge data:
         st.detrend('demean')
@@ -806,7 +809,7 @@ class setup_detection:
                     else:
                         # Zero pad data (as insufficient data passed for final window) and print warning:
                         data[i,j,:] = 0.
-                        print("Warning: Zero-padding as not enough data to fill window overlap ( for win_len_s =", self.win_len_s, "and win_step_inc_s =", self.win_step_inc_s, ")")
+                        logger.warning("Warning: Zero-padding as not enough data to fill window overlap ( for win_len_s =", self.win_len_s, "and win_step_inc_s =", self.win_step_inc_s, ")")
                 except IndexError:
                     # Deal with if a particular station has no data for given window:
                     data[i,j,:] = 0.
@@ -874,13 +877,13 @@ class setup_detection:
         yy = self.stations_df['y_array_coords_km'].values
         # And run:
         if verbosity>1:
-            print("Performing run for",data.shape[0],"windows")
+            logger.info("Performing run for",data.shape[0],"windows")
             tic = time.time()
         Pfreq_all = _fast_freq_domain_array_proc(data, self.min_sl, self.max_sl, self.n_sl, self.min_baz, self.max_baz, self.n_baz,
                                                  self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)
         if verbosity>1:
             toc = time.time()
-            print(toc-tic)
+            logger.info(f'runtime for _beamforming is {toc-tic}')
         # And tidy:
         del data 
         gc.collect()
@@ -949,7 +952,7 @@ class setup_detection:
         for index, row in events_df.iterrows():
             if count % 10 == 0:
                 if verbosity > 0:
-                    print("Calculating uncertainty for event", count+1, "/", len(events_df))
+                    logger.info("Calculating uncertainty for event", count+1, "/", len(events_df))
             # Load in data (if needed):
             # (done like this to avoid unnneccessary read ins, improving eff.)
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
@@ -1167,9 +1170,9 @@ class setup_detection:
 
             # Check if all inputs are same length, and if not, skip file:
             if not len(t_series_df_Z) == len(t_series_df_N) == len(t_series_df_E):
-                print("Warning: Files with f uid", f_uid, 
+                logger.warning("Warning: Files with f uid", f_uid, 
                       "are not of equal length. Therefore using shortest length (will miss some data).")
-                print("( Lengths are", len(t_series_df_Z) , len(t_series_df_N) , len(t_series_df_E), ")")
+                logger.warning("( Lengths are", len(t_series_df_Z) , len(t_series_df_N) , len(t_series_df_E), ")")
                 min_len = np.min(np.array([len(t_series_df_Z), len(t_series_df_N), len(t_series_df_E)]))
                 t_series_df_Z = t_series_df_Z.iloc[:min_len]
                 t_series_df_N = t_series_df_N.iloc[:min_len]
@@ -1188,7 +1191,7 @@ class setup_detection:
             t_series_df_hor["back_azi"] = np.average(np.vstack((t_series_df_N['back_azi'], t_series_df_E['back_azi'])), 
                                                         axis=0, weights=np.vstack((N_weighting, 
                                                         E_weighting))) # Weighted mean (weighted by power)
-            print("(Weighted horizontal slowness and back-azi using power)")
+            # print("(Weighted horizontal slowness and back-azi using power)")
             del N_weighting, E_weighting, t_series_df_N, t_series_df_E
             gc.collect()
 
@@ -1214,10 +1217,10 @@ class setup_detection:
 
             # Plot detected, phase-associated picks:
             if verbosity > 1:
-                print("="*40)
-                print("Event phase associations:")            
-                print(events_df)
-                print("="*40)
+                # print("="*40)
+                logger.info("Event phase associations:")            
+                # print(events_df)
+                # print("="*40)
                 fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(9,6))
                 # Plot power:
                 ax[0].plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
@@ -1232,7 +1235,7 @@ class setup_detection:
                     ax[0].scatter(events_df_all['t1'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
                     ax[0].scatter(events_df_all['t2'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
                 else:
-                    print("No events to plot.")
+                    logger.info("No events to plot.")
                 ax[0].legend()
                 ax[2].set_xlabel("Time")
                 ax[0].set_ylabel("Power (arb. units)")
