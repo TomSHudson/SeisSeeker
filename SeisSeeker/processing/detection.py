@@ -570,9 +570,7 @@ class setup_detection:
         dt_start = self.starttime.date
         dt_end = self.endtime.date
         ndays = (dt_end - dt_start).days + 1
-        print(ndays)
         query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
-        print(query_dates)
         for date in query_dates:
             # Loop over dates within start/end range:
             # Loop over channels:
@@ -584,9 +582,12 @@ class setup_detection:
                 for hour in range(24):
                     # Loop over every hour in every day..
                     print(f"Processing for hour: {hour:02d}")
-                    # Make outfiles
+                    # Make outfile
                     outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
-
+                    if ((self.archivedir / outfile).is_file()) & (self.overwrite):
+                        print(f'{outfile} exists in {self.archivedir}')
+                        print('Move to next hour')
+                        continue
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
                     if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
