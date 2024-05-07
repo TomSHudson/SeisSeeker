@@ -650,10 +650,10 @@ class setup_detection:
                         for t_serie in t_series:
                             t_series_out.append( str(time_this_minute_st + t_serie) )
 
-                        data_store['t'].append(t_series_out)
-                        data_store['power'].append(powers)
-                        data_store['slowness'].append(slownesses)
-                        data_store['back_azi'].append(back_azis)
+                        data_store['t'].extend(t_series_out)
+                        data_store['power'].extend(powers)
+                        data_store['slowness'].extend(slownesses)
+                        data_store['back_azi'].extend(back_azis)
 
                         # And clear memory:
                         del Psum_all, t_series, powers, slownesses, back_azis
