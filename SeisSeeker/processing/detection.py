@@ -512,7 +512,7 @@ class setup_detection:
 
         """
         # Initialise input params:
-        self.archivedir = archivedir
+        self.archivedir = Path(archivedir)
         self.outdir = outdir
         self.stations_fname = stations_fname
         self.starttime = starttime
@@ -584,6 +584,9 @@ class setup_detection:
                 for hour in range(24):
                     # Loop over every hour in every day..
                     print(f"Processing for hour: {hour:02d}")
+                    # Make outfiles
+                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
+
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
                     if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
