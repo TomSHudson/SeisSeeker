@@ -584,7 +584,7 @@ class setup_detection:
                     print(f"Processing for hour: {hour:02d}")
                     # Make outfile
                     outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
-                    if ((self.archivedir / outfile).is_file()) & (self.overwrite):
+                    if ((self.outdir / outfile).is_file()) & (self.overwrite):
                         print(f'{outfile} exists in {self.archivedir}')
                         print('Move to next hour')
                         continue
@@ -593,8 +593,8 @@ class setup_detection:
                     if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
                         continue
 
-                    # Create datastore:
-                    store_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
+                    # Create datastores:
+                    data_store = {'t': [], 'power': [], 'slowness': [], 'back_azi': []}
 
                     # Load data:
                     st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
@@ -645,18 +645,19 @@ class setup_detection:
                         for t_serie in t_series:
                             t_series_out.append( str(time_this_minute_st + t_serie) )
 
-                        tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                        store_df = pd.concat([store_df, tmp_df])
+                        data_store['t'].append(t_series_out)
+                        data_store['power'].append(powers)
+                        data_store['slowness'].append(slownesses)
+                        data_store['back_azi'].append(back_azis)
 
                         # And clear memory:
                         del Psum_all, t_series, powers, slownesses, back_azis
                         gc.collect()
 
-                    store_df.reset_index(drop=True, inplace=True)
-
                     # And save data out:
-                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
                     out_fname = os.path.join(self.outdir, outfile)
+                    #make DataFrame "just-in-time" as it is more efficient this way
+                    store_df = pd.DataFrame(data_store)
                     store_df.to_csv(out_fname, index=False)
 
                     # And append fname to history:
