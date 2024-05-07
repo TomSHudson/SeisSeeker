@@ -671,9 +671,7 @@ class setup_detection:
 
                     # And append fname to history:
                     self.out_fnames_array_proc.append(out_fname)
-
-
-                        
+              
         return None
 
     def _setup_array_receiver_coords(self):
