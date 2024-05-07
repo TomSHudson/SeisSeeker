@@ -593,7 +593,7 @@ class setup_detection:
                     store_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
 
                     # Load data:
-                    st = self._load_day_of_data(year=date.year, month=date.month, day=date.day, hour=hour)
+                    st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
                     try:
                         starttime_this_st = st[0].stats.starttime
                     except IndexError:
@@ -949,7 +949,8 @@ class setup_detection:
             # (done like this to avoid unnneccessary read ins, improving eff.)
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             if count == 0:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.month, event_phase_arr_time.day, hour=event_phase_arr_time.hour)
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)
 
             # Find uncertainties:
             # ------- For vertical -------:
@@ -971,7 +972,8 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.month, event_phase_arr_time.day, hour=event_phase_arr_time.hour)   
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)   
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1042,7 +1044,8 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t2'])
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.month, event_phase_arr_time.day, hour=event_phase_arr_time.hour)            
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)            
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1407,7 +1410,8 @@ class setup_detection:
             If True, returns st and composite_st. Optional. Default = False.  
         """
         # Load in raw mseed data:
-        st = self._load_day_of_data(arrival_time.year, arrival_time.month, arrival_time.day, hour=arrival_time.hour)
+        st = self._load_data(arrival_time.year, arrival_time.month,
+                             arrival_time.day, hour=arrival_time.hour)
         # And trim data:
         st.trim(starttime=arrival_time-t_before_s, endtime=arrival_time+t_after_s)
 
