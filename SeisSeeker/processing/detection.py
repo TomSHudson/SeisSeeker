@@ -723,15 +723,28 @@ class setup_detection:
         print("="*60)
 
 
-    def _load_data(self, data_datetime, whole_day=False):
+    def _load_data(self, year, month, day, hour=None):
         """
-        Function to load a day of data.
+        Function to load data. If no hour is specified the whole day will be read in.
+        Otherwise the hour of data will be loaded.
+
+        Parameters
+        ----------
+
+        year : int
+            year to load data for (yyyy)
+        month : int 
+            month to load data for. Leading 0's will be added.        
+        day : int 
+            day to load data for. Leading 0's will be added.
+        hour : int, Optional
+            hour to load data for. Leading 0's will be added.
         
+        Returns:
+        ----------
+        data : obspy.Stream
+            Waveform data for requested date and time.
         """
-        year = data_datetime.year
-        month = data_datetime.month
-        day = data_datetime.day
-        
         # Load in data:
         mseed_dir = Path(self.archivedir, str(year), str(month).zfill(2), str(day).zfill(2))
         # print(mseed_dir)
@@ -740,10 +753,9 @@ class setup_detection:
             # [J Asplet - think about replacing station DataFrame with StatonXML object]
             station = row['Name']
             for channel in self.channels_to_use:
-                if whole_day:
+                if hour is None:
                     timestamp = f'{year:02d}{month:02d}{day:02d}T*'          
                 else:
-                    hour = data_datetime.hour
                     timestamp = f'{year:02d}{month:02d}{day:02d}T{hour:02d}0000'
                 try:
                     st_tmp = obspy.read(f'{mseed_dir}/{timestamp}_{station}_{channel}.mseed')
