@@ -17,7 +17,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import os, sys
 import obspy
 import datetime
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, hilbert
 from numba import jit, objmode, prange, set_num_threads
 import gc 
 import logging
@@ -379,6 +379,41 @@ def _create_stacked_data_st(st, Z_all, N_all, E_all):
     tr.stats.station = "STDEV"
     tr.stats.channel = st[0].stats.channel[0:2]+"E"
     tr.data = np.std(E_all, axis=1)
+    composite_st.append(tr)
+    del tr
+    gc.collect()
+
+    return composite_st
+
+def _create_phase_weighted_stack_st(st, Z_all, N_all, E_all, degree=1):
+    """Function to create stacked data st."""
+
+    Z_inst_phase_all = hilbert(Z_all)
+    N_inst_phase_all = hilbert(N_all)
+    E_inst_phase_all = hilbert(E_all)
+
+    Z_phase_stack = (np.absolute(np.mean(np.exp(Z_inst_phase_all * 1j), axis=1), axis=1))
+    N_phase_stack = (np.absolute(np.mean(np.exp(N_inst_phase_all * 1j), axis=1), axis=1))
+    E_phase_stack = (np.absolute(np.mean(np.exp(E_inst_phase_all * 1j), axis=1), axis=1))
+
+    composite_st = obspy.Stream()
+    # For Z stacked:
+    tr = st[0].copy()
+    tr.stats.station = "PW_STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"Z"
+    tr.data = np.mean(Z_all, axis=1)*(Z_phase_stack**degree)
+    composite_st.append(tr)
+    # For N stacked:
+    tr = st[0].copy()
+    tr.stats.station = "PW-STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"N"
+    tr.data = np.mean(N_all, axis=1)*(N_phase_stack**degree)
+    composite_st.append(tr)
+    # For E stacked:
+    tr = st[0].copy()
+    tr.stats.station = "PW-STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"E"
+    tr.data = np.mean(E_all, axis=1)*(E_phase_stack**degree)
     composite_st.append(tr)
     del tr
     gc.collect()
@@ -1392,7 +1427,7 @@ class setup_detection:
         f.close()
         print("Loaded detection instance from:", preload_fname)
 
-    
+
     def get_composite_array_st_from_bazi_slowness(self, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10, st_out_fname='out.m', return_streams=False):
         """Function to find array stacked stream from back-azimuth and slowness. Returns average amplitude 
         time-series seismogram of stacked array data, for all three componets.
@@ -1458,10 +1493,8 @@ class setup_detection:
         n_stat = len(st.select(channel="??Z"))
         # Get unique channels:
         chan_labels_tmp = []
-        chan_labels_unique = []
         for tr in st:
             chan_labels_tmp.append(tr.stats.channel)
-        chan_labels_unique = list(set(chan_labels_tmp))
         # Create datastores to save to:
         max_st_len = 0
         for i in range(len(st)):
@@ -1503,8 +1536,10 @@ class setup_detection:
                     E_all[:len(st.select(channel="??2")[i].data),i] = st.select(channel="??2")[i].data       
 
         # And create stacked data stream:
-        composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
-
+        if method == 'linear':
+            composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
+        elif method == 'pws':
+            composite_s = _create_phase_weighted_stack_st(st, Z_all, N_all, E_all)
         # And decimate data back down to original sampling rate:
         st.decimate(10, no_filter=True)
         composite_st.decimate(10, no_filter=True)
