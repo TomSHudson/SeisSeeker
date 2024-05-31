@@ -388,20 +388,23 @@ def _create_stacked_data_st(st, Z_all, N_all, E_all):
 def _create_phase_weighted_stack_st(st, Z_all, N_all, E_all, degree=1):
     """Function to create stacked data st."""
 
-    Z_inst_phase_all = hilbert(Z_all)
-    N_inst_phase_all = hilbert(N_all)
-    E_inst_phase_all = hilbert(E_all)
+    print(Z_all.shape)
+    Z_inst_phase_all = hilbert(Z_all, axis=1)
+    N_inst_phase_all = hilbert(N_all, axis=1)
+    E_inst_phase_all = hilbert(E_all, axis=1)
+    print(Z_inst_phase_all.shape)
 
-    Z_phase_stack = (np.absolute(np.mean(np.exp(Z_inst_phase_all * 1j), axis=1), axis=1))
-    N_phase_stack = (np.absolute(np.mean(np.exp(N_inst_phase_all * 1j), axis=1), axis=1))
-    E_phase_stack = (np.absolute(np.mean(np.exp(E_inst_phase_all * 1j), axis=1), axis=1))
-
+    Z_phase_stack = (np.absolute(np.mean(np.exp(Z_inst_phase_all * 1j), axis=1)))
+    N_phase_stack = (np.absolute(np.mean(np.exp(N_inst_phase_all * 1j), axis=1)))
+    E_phase_stack = (np.absolute(np.mean(np.exp(E_inst_phase_all * 1j), axis=1)))
+    print(Z_phase_stack.shape)
     composite_st = obspy.Stream()
     # For Z stacked:
     tr = st[0].copy()
-    tr.stats.station = "PW_STACK"
+    tr.stats.station = "PW-STACK"
     tr.stats.channel = st[0].stats.channel[0:2]+"Z"
     tr.data = np.mean(Z_all, axis=1)*(Z_phase_stack**degree)
+    print(tr.data.shape)
     composite_st.append(tr)
     # For N stacked:
     tr = st[0].copy()
@@ -1428,7 +1431,7 @@ class setup_detection:
         print("Loaded detection instance from:", preload_fname)
 
 
-    def get_composite_array_st_from_bazi_slowness(self, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10, st_out_fname='out.m', return_streams=False):
+    def get_composite_array_st_from_bazi_slowness(self, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10, st_out_fname='out.m', return_streams=False, method='linear', degree=1):
         """Function to find array stacked stream from back-azimuth and slowness. Returns average amplitude 
         time-series seismogram of stacked array data, for all three componets.
         Parameters
@@ -1539,7 +1542,10 @@ class setup_detection:
         if method == 'linear':
             composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
         elif method == 'pws':
-            composite_s = _create_phase_weighted_stack_st(st, Z_all, N_all, E_all)
+            composite_st = _create_phase_weighted_stack_st(st, Z_all, N_all, E_all, degree)
+        elif method == 'nth_root':
+            pass
+            # composite_st = _create_nth_root_stack_st(st, Z_all, N_all, E_all, degree)
         # And decimate data back down to original sampling rate:
         st.decimate(10, no_filter=True)
         composite_st.decimate(10, no_filter=True)
