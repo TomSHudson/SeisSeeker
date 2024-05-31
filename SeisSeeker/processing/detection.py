@@ -814,7 +814,7 @@ class setup_detection:
                     else:
                         # Zero pad data (as insufficient data passed for final window) and print warning:
                         data[i,j,:] = 0.
-                        logger.warning("Warning: Zero-padding as not enough data to fill window overlap ( for win_len_s =", self.win_len_s, "and win_step_inc_s =", self.win_step_inc_s, ")")
+                        logger.warning(f"Warning: Zero-padding as not enough data to fill window overlap ( for win_len_s = {self.win_len_s}, and win_step_inc_s = {self.win_step_inc_s})")
                 except IndexError:
                     # Deal with if a particular station has no data for given window:
                     data[i,j,:] = 0.
