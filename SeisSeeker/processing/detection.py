@@ -572,7 +572,12 @@ class setup_detection:
         # Find number of days to run array processing over
         dt_start = self.starttime.date
         dt_end = self.endtime.date
-        ndays = (dt_end - dt_start).days + 1
+        if (dt_end - dt_start).days == 0:
+            #round up to one day at minimum
+            ndays = 1
+        else:
+            ndays = (dt_end - dt_start).days
+
         query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
         for date in query_dates:
             # Loop over dates within start/end range:
