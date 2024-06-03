@@ -632,6 +632,7 @@ class setup_detection:
                     if ((self.outdir / outfile).is_file()) & (self.skip_existing):
                         logger.warning(f'{outfile} exists in {self.outdir}')
                         logger.warning('Move to next hour')
+                        self.out_fnames_array_proc.append(self.outdir / outfile)
                         continue
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
@@ -820,6 +821,7 @@ class setup_detection:
                     continue
         # Merge data:
         st.detrend('demean')
+        st.detrend('linear')
         st.merge(method=1, fill_value=0.)
         # And apply filter:
         if self.freqmin:
