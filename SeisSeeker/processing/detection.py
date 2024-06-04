@@ -832,8 +832,7 @@ class setup_detection:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
             st.trim(endtime=self.endtime)
-        return st.normalize()
-
+        return st
     
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
