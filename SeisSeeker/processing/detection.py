@@ -632,7 +632,7 @@ class setup_detection:
                     if ((self.outdir / outfile).is_file()) & (self.skip_existing):
                         logger.warning(f'{outfile} exists in {self.outdir}')
                         logger.warning('Move to next hour')
-                        self.out_fnames_array_proc.append(self.outdir / outfile)
+                        self.out_fnames_array_proc.append(f'{self.outdir} / {outfile}')
                         continue
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
@@ -1204,7 +1204,7 @@ class setup_detection:
                     t_series_df_E = pd.read_csv(fname_E)
             else:
                 logger.warning(f'fname {fname} not in fname_array_proc list')
-                logger.debug(f'fname_array_proc first entry looks like this {self.out_fnames_array_proc[0]}')
+                logger.warning(f'fname_array_proc first entry looks like this {self.out_fnames_array_proc[0]}')
                 continue # Skip file, as not previously been processed.
             # And check to see that t-series exists within file:
             if len(t_series_df_Z) == 0:
