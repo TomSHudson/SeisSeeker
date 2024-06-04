@@ -1204,6 +1204,8 @@ class setup_detection:
                     fname_E = os.path.join(self.outdir, ''.join(( "detection_t_series_", f_uid, "_ch2.csv" )))
                     t_series_df_E = pd.read_csv(fname_E)
             else:
+                logger.warning(f'fname {fname} not in fname_array_proc list')
+                logger.debug(f'fname_array_proc first entry looks like this {self.out_fnames_array_proc[0]}')
                 continue # Skip file, as not previously been processed.
             # And check to see that t-series exists within file:
             if len(t_series_df_Z) == 0:
@@ -1251,7 +1253,8 @@ class setup_detection:
 
             # Phase assoicate by BAZI threshold and max. power:
             events_df = _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, 
-                                                self.bazi_tol, self.filt_phase_assoc_by_max_power, self.max_phase_sep_s, self.min_event_sep_s, verbosity=verbosity)
+                                                self.bazi_tol, self.filt_phase_assoc_by_max_power,
+                                                self.max_phase_sep_s, self.min_event_sep_s, verbosity=verbosity)
 
             # Find uncertainties (in time, bazi, slowness):
             if self.calc_uncertainties:
