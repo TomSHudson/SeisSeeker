@@ -632,7 +632,7 @@ class setup_detection:
                     if ((self.outdir / outfile).is_file()) & (self.skip_existing):
                         logger.warning(f'{outfile} exists in {self.outdir}')
                         logger.warning('Move to next hour')
-                        self.out_fnames_array_proc.append(f'{self.outdir} / {outfile}')
+                        self.out_fnames_array_proc.append(f'{self.outdir}/{outfile}')
                         continue
                     if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
                         continue
@@ -832,7 +832,7 @@ class setup_detection:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
             st.trim(endtime=self.endtime)
-        return st
+        return st.normalize()
     
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
