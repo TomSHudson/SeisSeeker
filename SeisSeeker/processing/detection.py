@@ -388,16 +388,13 @@ def _create_stacked_data_st(st, Z_all, N_all, E_all):
 def _create_phase_weighted_stack_st(st, Z_all, N_all, E_all, degree=1):
     """Function to create stacked data st."""
 
-    print(Z_all.shape)
     Z_inst_phase_all = hilbert(Z_all, axis=1)
     N_inst_phase_all = hilbert(N_all, axis=1)
     E_inst_phase_all = hilbert(E_all, axis=1)
-    print(Z_inst_phase_all.shape)
 
     Z_phase_stack = (np.absolute(np.mean(np.exp(Z_inst_phase_all * 1j), axis=1)))
     N_phase_stack = (np.absolute(np.mean(np.exp(N_inst_phase_all * 1j), axis=1)))
     E_phase_stack = (np.absolute(np.mean(np.exp(E_inst_phase_all * 1j), axis=1)))
-    print(Z_phase_stack.shape)
     composite_st = obspy.Stream()
     # For Z stacked:
     tr = st[0].copy()
@@ -829,8 +826,6 @@ class setup_detection:
             if self.freqmax:
                 st.filter('bandpass', freqmin=self.freqmin, freqmax=self.freqmax)
         # And trim data, if some lies outside start and end time of beamforming period:
-        print(self.starttime, st[0].stats.starttime)
-        print(self.endtime, st[0].stats.endtime)
         if self.starttime > st[0].stats.starttime:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
