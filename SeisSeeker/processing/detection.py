@@ -644,8 +644,7 @@ class setup_detection:
 
                     # Load data:
                     try:
-                        st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour,
-                                             norm=self.normalise_data)
+                        st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
                     except IndexError:
                         # And skip if no data:
                         logger.exception("Skipping hour as no data")
@@ -1007,8 +1006,7 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             if count == 0:
                 st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
-                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour,
-                                     norm=self.normalise_data)
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)
 
             # Find uncertainties:
             # ------- For vertical -------:
@@ -1031,8 +1029,7 @@ class setup_detection:
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
                 st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
-                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour,
-                                     norm=self.normalise_data)   
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)   
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1104,8 +1101,7 @@ class setup_detection:
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
                 st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
-                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour,
-                                     norm=self.normalise_data)            
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)            
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
