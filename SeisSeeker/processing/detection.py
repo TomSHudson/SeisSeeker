@@ -645,6 +645,7 @@ class setup_detection:
                     # Load data:
                     try:
                         st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
+                        print(st)
                     except IndexError:
                         # And skip if no data:
                         logger.exception("Skipping hour as no data")
@@ -835,8 +836,7 @@ class setup_detection:
         if self.endtime < st[0].stats.endtime:
             st.trim(endtime=self.endtime)
 
-        else: 
-            return st
+        return st
 
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
