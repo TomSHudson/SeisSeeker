@@ -644,7 +644,8 @@ class setup_detection:
 
                     # Load data:
                     try:
-                        st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
+                        st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour,
+                                             norm=self.normalise_data)
                     except IndexError:
                         # And skip if no data:
                         logger.exception("Skipping hour as no data")
@@ -778,7 +779,7 @@ class setup_detection:
         print("="*60)
 
 
-    def _load_data(self, year, month, day, hour=None):
+    def _load_data(self, year, month, day, hour=None, norm=True):
         """
         Function to load data. If no hour is specified the whole day will be read in.
         Otherwise the hour of data will be loaded.
@@ -828,12 +829,16 @@ class setup_detection:
             if self.freqmax:
                 st.filter('bandpass', freqmin=self.freqmin, freqmax=self.freqmax)
         # And trim data, if some lies outside start and end time of beamforming period:
+        print(self.starttime, st[0].stats.starttime)
+        print(self.endtime, st[0].stats.endtime)
         if self.starttime > st[0].stats.starttime:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
             st.trim(endtime=self.endtime)
-        return st.normalize()
-    
+
+        else: 
+            return st
+
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
         self.n_win = int(((st[0].stats.endtime - self.win_pad_s) - st[0].stats.starttime) / self.win_step_inc_s) # (Note: endtime - self.win_pad_s as pass extra padding via trimmed st)
@@ -1002,7 +1007,8 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             if count == 0:
                 st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
-                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour,
+                                     norm=self.normalise_data)
 
             # Find uncertainties:
             # ------- For vertical -------:
@@ -1025,7 +1031,8 @@ class setup_detection:
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
                 st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
-                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)   
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour,
+                                     norm=self.normalise_data)   
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1097,7 +1104,8 @@ class setup_detection:
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
                 st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
-                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)            
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour,
+                                     norm=self.normalise_data)            
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1466,7 +1474,7 @@ class setup_detection:
         """
         # Load in raw mseed data:
         st = self._load_data(arrival_time.year, arrival_time.month,
-                             arrival_time.day, hour=arrival_time.hour)
+                             arrival_time.day, hour=arrival_time.hour, norm=False)
         # And trim data:
         st.trim(starttime=arrival_time-t_before_s, endtime=arrival_time+t_after_s)
 
@@ -1541,7 +1549,9 @@ class setup_detection:
                     E_all[:,i] = st.select(channel="??2")[i].data
                 else:
                     E_all[:len(st.select(channel="??2")[i].data),i] = st.select(channel="??2")[i].data       
-
+            except:
+                print('Date gap, continue... for now')
+                continue
         # And create stacked data stream:
         if method == 'linear':
             composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
