@@ -126,10 +126,7 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
                     aconj = np.conj(a)
                     Pfreq[ii,ir,itheta]=np.dot(np.dot(aconj,Rxx),a) # Cross-correlation, with two timeshifts applied to push the two stations to the centre point. 
                     # (This can also be seen as projecting Rxx onto a new basis.)
-
-        # And remove any data where stations don't exist:
-        ###np.nan_to_num(Pfreq, copy=False, nan=0.0) # NOT SUPPORTED BY NUMBA SO DO OUTSIDE NUMBA
-                    
+    
         # And append output to datastore:
         Pfreq_all[win_idx,:,:,:] = Pfreq
 
