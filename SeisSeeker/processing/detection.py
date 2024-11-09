@@ -73,9 +73,9 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
     # (so that don't have to do it for every frequency)
     tlib = np.zeros((n_stations,n_sl,n_baz), dtype=np.complex128)
     for ir in range(0,n_sl):
-            for itheta in range(0,n_baz):
-                # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
-                tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
+        for itheta in range(0,n_baz):
+            # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
+            tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
     # Since receivers are relative to the array centre, can shift all receivers back to that centre.
 
     # Create data stores:
@@ -117,7 +117,9 @@ def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n
                             Rxx[i1,i2] = np.conj(Pxx_all[curr_f_idx,i1]) * Pxx_all[curr_f_idx,i2]
                         else:
                             Rxx[i1,i2] = 0
-
+                    else:
+                        Rxx[i1,i2] = np.conj(Pxx_all[curr_f_idx,i1]) * Pxx_all[curr_f_idx,i2]
+                        
             # And loop over phase shifts, calculating cross-correlation power:
             for ir in range(0,n_sl):
                 for itheta in range(0,n_baz):
