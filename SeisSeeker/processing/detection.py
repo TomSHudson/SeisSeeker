@@ -11,21 +11,23 @@
 # Import neccessary modules:
 import pandas as pd
 import numpy as np
-import matplotlib
+from pathlib import Path, PurePath
 import matplotlib.pyplot as plt 
 from mpl_toolkits.mplot3d import Axes3D
 import os, sys
 import obspy
-from scipy.signal import find_peaks
+import datetime
+from scipy.signal import find_peaks, hilbert
 from numba import jit, objmode, prange, set_num_threads
 import gc 
+import logging
 # import multiprocessing as mp
 import time 
 import glob 
 import pickle
 from SeisSeeker.processing import lookup_table_manager, location 
 
-
+logger = logging.getLogger(__name__)
 
 #----------------------------------------------- Define main functions -----------------------------------------------
 class CustomError(Exception):
@@ -49,7 +51,9 @@ def xy_to_rtheta(x,y):
 
 
 @jit(nopython=True, parallel=True)#, nogil=True)
-def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
+def _fast_freq_domain_array_proc(data, min_sl, max_sl, n_sl, min_baz, max_baz, n_baz, fs, target_freqs, xx, yy,
+                                 n_stations, n_t_samp, remove_autocorr,
+                                 ):
     """Function to perform array processing fast due to being designed to 
     be wrapped using Numba. Function inspired by Bowden et al. (2021).
     Performs array processing in polar coordinates.
@@ -59,25 +63,23 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
     # Define grid of slownesses:
     # number of pixes in x and y
     # (Determines number of phase shifts to perform)
-    n_ur = 26 #51 #101
-    n_utheta = 120 #51 #101
-    ur = np.linspace(0,max_sl,n_ur)
-    utheta = np.linspace(0,360-(360/n_utheta),n_utheta)
+    ur = np.linspace(min_sl,max_sl,n_sl)
+    utheta = np.linspace(min_baz, max_baz, n_baz)
     utheta_rad = np.deg2rad(utheta)
     dur=ur[1]-ur[0]
     dutheta=utheta[1]-utheta[0]
 
     # Compute time-shifts once:
     # (so that don't have to do it for every frequency)
-    tlib = np.zeros((n_stations,n_ur,n_utheta), dtype=np.complex128)
-    for ir in range(0,n_ur):
-            for itheta in range(0,n_utheta):
-                # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
-                tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
+    tlib = np.zeros((n_stations,n_sl,n_baz), dtype=np.complex128)
+    for ir in range(0,n_sl):
+        for itheta in range(0,n_baz):
+            # tlib[:,ix,iy] = xx*ux[ix] + yy*uy[iy] # (distance x slowness = distance / velocity = time)
+            tlib[:,ir,itheta] = xx*ur[ir]*np.sin((utheta_rad[itheta])) + yy*ur[ir]*np.cos((utheta_rad[itheta])) # (distance x slowness = distance / velocity = time)
     # Since receivers are relative to the array centre, can shift all receivers back to that centre.
 
     # Create data stores:
-    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_ur,n_utheta), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
+    Pfreq_all = np.zeros((data.shape[0],len(target_freqs),n_sl,n_baz), dtype=np.complex128) # Explicitly create Pxx_all, as otherwise prange won't work correctly.
 
     # Then loop over windows:
     for win_idx in prange(data.shape[0]):
@@ -85,10 +87,10 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
         # Construct data structure:
         nfft = (2.0**np.ceil(np.log2(n_t_samp)))
         nfft = np.array(nfft, dtype=np.int64)
-        Pxx_all = np.zeros((np.int((nfft/2)+1), n_stations), dtype=np.complex128) # Power spectra
+        Pxx_all = np.zeros((np.int64((nfft/2)+1), n_stations), dtype=np.complex128) # Power spectra
         dt = 1. / fs 
         df = 1.0/(2.0*nfft*dt)
-        xf = np.linspace(0.0, 1.0/(2.0*dt), np.int((nfft/2)+1))
+        xf = np.linspace(0.0, 1.0/(2.0*dt), np.int64((nfft/2)+1))
         # Calculate power spectra for all stations:
         for sta_idx in range(n_stations):
             # Calculate spectra for current station:
@@ -98,7 +100,7 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
             Pxx_all[:,sta_idx] = Pxx_curr
 
         # Loop over all freqs, performing phase shifts:
-        Pfreq=np.zeros((len(target_freqs),n_ur,n_utheta),dtype=np.complex128)
+        Pfreq=np.zeros((len(target_freqs),n_sl,n_baz),dtype=np.complex128)
         counter_grid = 0
         for ii in range(len(target_freqs)):
             # Find closest current freq.:
@@ -115,19 +117,18 @@ def _fast_freq_domain_array_proc(data, max_sl, fs, target_freqs, xx, yy, n_stati
                             Rxx[i1,i2] = np.conj(Pxx_all[curr_f_idx,i1]) * Pxx_all[curr_f_idx,i2]
                         else:
                             Rxx[i1,i2] = 0
-
+                    else:
+                        Rxx[i1,i2] = np.conj(Pxx_all[curr_f_idx,i1]) * Pxx_all[curr_f_idx,i2]
+                        
             # And loop over phase shifts, calculating cross-correlation power:
-            for ir in range(0,n_ur):
-                for itheta in range(0,n_utheta):
+            for ir in range(0,n_sl):
+                for itheta in range(0,n_baz):
                     timeshifts = tlib[:,ir,itheta] # Calculate the "steering vector" (a vector in frequency space, based on phase-shift)
                     a = np.exp(-1j*2*np.pi*target_f*timeshifts) # (a is a steering vector, to allign all traces with array centre)
                     aconj = np.conj(a)
                     Pfreq[ii,ir,itheta]=np.dot(np.dot(aconj,Rxx),a) # Cross-correlation, with two timeshifts applied to push the two stations to the centre point. 
                     # (This can also be seen as projecting Rxx onto a new basis.)
-
-        # And remove any data where stations don't exist:
-        ###np.nan_to_num(Pfreq, copy=False, nan=0.0) # NOT SUPPORTED BY NUMBA SO DO OUTSIDE NUMBA
-                    
+    
         # And append output to datastore:
         Pfreq_all[win_idx,:,:,:] = Pfreq
 
@@ -167,13 +168,12 @@ def _phase_associator_core_worker(peaks_Z, peaks_hor, bazis_Z, bazis_hor, bazi_t
     
     return Z_hor_phase_pair_idxs
 
-
 def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_tol, filt_phase_assoc_by_max_power, max_phase_sep_s, min_event_sep_s, verbosity=0):
     """
     Function to perform phase association for numba implementation.
     """
     # Setup events datastores:
-    events_df = pd.DataFrame()
+    list_of_curr_event_dfs = []
     # Find back-azimuths associated with phase picks:
     bazis_Z = t_series_df_Z['back_azi'].values[peaks_Z]
     bazis_hor = t_series_df_hor['back_azi'].values[peaks_hor]
@@ -182,7 +182,7 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
     # Perform core phae association:
     # Prep. data for numba format:
     if verbosity > 1:
-        print("Pre-processing time-series")
+        logger.info("Pre-processing time-series")
     t_Z_secs_after_start = []
     for index, row in t_series_df_Z.iterrows():
         t_Z_secs_after_start.append(obspy.UTCDateTime(row['t']) - obspy.UTCDateTime(t_series_df_Z['t'][0]))
@@ -191,19 +191,28 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
         t_hor_secs_after_start.append(obspy.UTCDateTime(row['t']) - obspy.UTCDateTime(t_series_df_hor['t'][0]))
     # Run function:
     if verbosity > 1:
-        print("Performing phase association")
+        logger.info("Performing phase association")
     Z_hor_phase_pair_idxs = _phase_associator_core_worker(peaks_Z, peaks_hor, bazis_Z, bazis_hor, bazi_tol, t_Z_secs_after_start, t_hor_secs_after_start, max_phase_sep_s)
     # Organise outputs into useful form:
     if verbosity > 1:
-        print("Writing events")
+        logger.info("Writing events")
+
+    curr_events = {'t1':[],'t2':[], 'pow1': [], 'pow2':[], 'slow1':[],
+                   'slow2':[], 'bazi1':[], 'bazi2':[]}
+    
     for event_idx in range(len(Z_hor_phase_pair_idxs)):
         curr_peak_Z_idx = Z_hor_phase_pair_idxs[event_idx][0]
         curr_peak_hor_idx = Z_hor_phase_pair_idxs[event_idx][1]
-        curr_event_df = pd.DataFrame({'t1': [t_series_df_Z['t'][curr_peak_Z_idx]], 't2': [t_series_df_hor['t'][curr_peak_hor_idx]], 
-                                            'pow1': [t_series_df_Z['power'][curr_peak_Z_idx]], 'pow2': [t_series_df_hor['power'][curr_peak_hor_idx]], 
-                                            'slow1': [t_series_df_Z['slowness'][curr_peak_Z_idx]], 'slow2': [t_series_df_hor['slowness'][curr_peak_hor_idx]], 
-                                            'bazi1': [t_series_df_Z['back_azi'][curr_peak_Z_idx]], 'bazi2': [t_series_df_hor['back_azi'][curr_peak_hor_idx]]})
-        events_df = events_df.append(curr_event_df)
+        curr_events['t1'].append(t_series_df_Z['t'][curr_peak_Z_idx])
+        curr_events['t2'].append(t_series_df_hor['t'][curr_peak_hor_idx])
+        curr_events['pow1'].append(t_series_df_Z['power'][curr_peak_Z_idx])
+        curr_events['pow2'].append(t_series_df_hor['power'][curr_peak_hor_idx])
+        curr_events['slow1'].append(t_series_df_Z['slowness'][curr_peak_Z_idx])
+        curr_events['slow2'].append(t_series_df_hor['slowness'][curr_peak_hor_idx])
+        curr_events['bazi1'].append(t_series_df_Z['back_azi'][curr_peak_Z_idx])
+        curr_events['bazi2'].append(t_series_df_hor['back_azi'][curr_peak_hor_idx])
+
+    events_df = pd.DataFrame(curr_events)
     # And tidy:
     del t_Z_secs_after_start, t_hor_secs_after_start, Z_hor_phase_pair_idxs
     gc.collect()
@@ -217,33 +226,33 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             # Calculate max power of P and S for each potential event:
             # events_overall_powers = events_df['pow1'].values + events_df['pow2'].values
             # Define datastores:
-            filt_events_df = pd.DataFrame()
+            filt_events_lst = []
             # And loop over events, selecting only max. power events:
             tmp_count = 0
             for index, row in events_df.iterrows():
                 tmp_count+=1
                 if tmp_count == 1:
-                    tmp_df = pd.DataFrame()
-                    tmp_df = tmp_df.append(row)
+                    tmp_lst = []
+                    tmp_lst.append(row)
                 else:
+
                     # Append event if phase within minimum event separation:
-                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_df['t1'].iloc[0]) < min_event_sep_s:
+                    if obspy.UTCDateTime(row['t1']) - obspy.UTCDateTime(tmp_lst[0].t1) < min_event_sep_s:
                         # Append event to compare:
-                        tmp_df = tmp_df.append(row)
+                        tmp_lst.append(row)
                     else:
                         # Find best event from previous events:
-                        combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-                        max_power_idx = np.argmax(combined_pows_tmp)
-                        filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
+                        max_power_event = _find_max_power_event(tmp_lst)
+                        filt_events_lst.append(max_power_event)
 
                         # And start acrewing new events:
-                        tmp_df = pd.DataFrame()
-                        tmp_df = tmp_df.append(row)
+                        tmp_lst = []
+                        tmp_lst.append(row)
             # And calculate highest power event for final window:
-            combined_pows_tmp = tmp_df['pow1'].values + tmp_df['pow2'].values
-            max_power_idx = np.argmax(combined_pows_tmp)
-            filt_events_df = filt_events_df.append(tmp_df.iloc[max_power_idx])
-
+            max_power_event = _find_max_power_event(tmp_lst)
+            filt_events_lst.append(max_power_event)
+            # Now make new DataFrame
+            filt_events_df = pd.DataFrame(filt_events_lst)
             # And sort indices:
             filt_events_df.reset_index(drop=True, inplace=True)
 
@@ -251,12 +260,12 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
             # (using same max. power method)
             # Append summed powers, for sorting:
             sum_pows = filt_events_df['pow1'].values + filt_events_df['pow2'].values
-            sum_pows_df = pd.DataFrame({'sum_pows': sum_pows})
-            filt_events_df = filt_events_df.join(sum_pows_df)
+            filt_events_df['sum_pows'] = sum_pows
             # Remove t2 duplicates, keep highest summed power:
-            filt_events_df = filt_events_df.sort_values('sum_pows').drop_duplicates(subset='t2', keep='last')
+            filt_events_df.sort_values('sum_pows', inplace=True)
+            filt_events_df.drop_duplicates(subset='t2', keep='last', inplace=True)
             # And remove sum_pows column:
-            filt_events_df = filt_events_df.drop(columns=['sum_pows'])
+            filt_events_df.drop(columns=['sum_pows'], inplace=True)
 
             # And output df:
             events_df = filt_events_df.copy()
@@ -265,6 +274,22 @@ def _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, bazi_t
 
     return events_df
 
+def _find_max_power_event(events):
+    """
+    Find the maximum power event from a list of events
+
+    Parameters:
+    ----------
+    events : list
+        list (of Dataframe Rows) of event
+
+    """
+    pow1_tmp = np.array([event.pow1 for event in events])
+    pow2_tmp = np.array([event.pow2 for event in events])
+    combined_pows_tmp = pow1_tmp + pow2_tmp
+    max_power_idx = np.argmax(combined_pows_tmp)
+    max_power_event = events[max_power_idx]
+    return max_power_event
 
 def _submit_parallel_fast_freq_domain_array_proc(procnum, return_dict_Pfreq_all, data_curr_run, max_sl, fs, target_freqs, xx, yy, n_stations, n_t_samp, remove_autocorr):
     """Function to submit parallel runs of _fast_freq_domain_array_proc() function."""
@@ -359,6 +384,40 @@ def _create_stacked_data_st(st, Z_all, N_all, E_all):
 
     return composite_st
 
+def _create_phase_weighted_stack_st(st, Z_all, N_all, E_all, degree=1):
+    """Function to create stacked data st."""
+
+    Z_inst_phase_all = hilbert(Z_all, axis=1)
+    N_inst_phase_all = hilbert(N_all, axis=1)
+    E_inst_phase_all = hilbert(E_all, axis=1)
+
+    Z_phase_stack = (np.absolute(np.mean(np.exp(Z_inst_phase_all * 1j), axis=1)))
+    N_phase_stack = (np.absolute(np.mean(np.exp(N_inst_phase_all * 1j), axis=1)))
+    E_phase_stack = (np.absolute(np.mean(np.exp(E_inst_phase_all * 1j), axis=1)))
+    composite_st = obspy.Stream()
+    # For Z stacked:
+    tr = st[0].copy()
+    tr.stats.station = "PW-STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"Z"
+    tr.data = np.mean(Z_all, axis=1)*(Z_phase_stack**degree)
+    print(tr.data.shape)
+    composite_st.append(tr)
+    # For N stacked:
+    tr = st[0].copy()
+    tr.stats.station = "PW-STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"N"
+    tr.data = np.mean(N_all, axis=1)*(N_phase_stack**degree)
+    composite_st.append(tr)
+    # For E stacked:
+    tr = st[0].copy()
+    tr.stats.station = "PW-STACK"
+    tr.stats.channel = st[0].stats.channel[0:2]+"E"
+    tr.data = np.mean(E_all, axis=1)*(E_phase_stack**degree)
+    composite_st.append(tr)
+    del tr
+    gc.collect()
+
+    return composite_st
 
 class setup_detection:
     """
@@ -368,7 +427,7 @@ class setup_detection:
     ----------
     archivedir : str
         Path to data archive. Data archive must be of specific format:
-        <archivedir>/YEAR/JULDAY/YEARJULDAY_*STATION_COMP.*
+        <archivedir>/YEAR/MONTH/DAY/YYYYMMDDTHHMMSS_*STATION_COMP.*
 
     outdir : str
         Path to directory to save outputs to.
@@ -390,6 +449,9 @@ class setup_detection:
 
     Attributes
     ----------
+
+    skip_existing : float
+        If True, then skip exisitng detection time series in outdir. Default is True.
 
     freqmin : float
         If specified, lower frequency of bandpass filter, in Hz. Default is None.
@@ -462,7 +524,7 @@ class setup_detection:
         ----------
         archivedir : str
             Path to data archive. Data archive must be of specific format:
-            <archivedir>/YEAR/JULDAY/YEARJULDAY_*STATION_COMP.*
+            <archivedir>/YEAR/MONTH/DAY/YYYYMMDDTHHMMSS_*STATION_COMP.*
 
         outdir : str
             Path to directory to save outputs to.
@@ -486,8 +548,8 @@ class setup_detection:
 
         """
         # Initialise input params:
-        self.archivedir = archivedir
-        self.outdir = outdir
+        self.archivedir = Path(archivedir)
+        self.outdir = Path(outdir)
         self.stations_fname = stations_fname
         self.starttime = starttime
         self.endtime = endtime
@@ -502,10 +564,16 @@ class setup_detection:
 
         # And define attributes:
         # For array processing:
+        self.skip_existing = True
         self.freqmin = None
         self.freqmax = None
         self.num_freqs = 100
+        self.min_sl = 0
         self.max_sl = 1.0
+        self.n_sl = 51
+        self.min_baz = 0
+        self.max_baz = 360
+        self.n_baz = 181
         self.win_len_s = 0.1
         self.win_step_inc_s = 0.1 # (Note: Default is to step with no overlap)
         self.remove_autocorr = True
@@ -529,6 +597,121 @@ class setup_detection:
         if preload_fname:
             self.load(preload_fname)
 
+    def run_array_proc(self):
+        """Function to run core array processing.
+        Performed in frequency domain. Involves applying phase (equiv. to time) shift 
+        for each frequency, over a range of specified slownesses.
+        Function inspured by work of D. Bowden (see Bowden et al. (2020))."""
+
+        # Find number of days to run array processing over
+        dt_start = self.starttime.date
+        dt_end = self.endtime.date
+        if (dt_end - dt_start).days == 0:
+            #round up to one day at minimum
+            ndays = 1
+        else:
+            ndays = (dt_end - dt_start).days
+
+        query_dates = [dt_start + datetime.timedelta(days=d) for d in range(0,ndays)]
+        for date in query_dates:
+            # Loop over dates within start/end range:
+            # Loop over channels:
+            for self.channel_curr in self.channels_to_use:
+                logger.info("="*60)
+                logger.info(f"Processing data for day {date}, channel {self.channel_curr}")
+                # And process for individual hours:
+                # (to reduce memory usage)
+                for hour in range(24):
+                    # Loop over every hour in every day..
+                    # Make outfile
+                    outfile = f'detection_t_series_{date.year:02d}{date.month:02d}{date.day:02d}_{hour:02d}00_ch{self.channel_curr[-1]}.csv'
+                    if ((self.outdir / outfile).is_file()) & (self.skip_existing):
+                        logger.warning(f'{outfile} exists in {self.outdir}')
+                        logger.warning('Move to next hour')
+                        self.out_fnames_array_proc.append(f'{self.outdir}/{outfile}')
+                        continue
+                    if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour) + 3600:
+                        continue
+                    if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour):
+                        continue
+
+                    # Create datastores:
+                    data_store = {'t': [], 'power': [], 'slowness': [], 'back_azi': []}
+
+                    # Load data:
+                    try:
+                        st = self._load_data(year=date.year, month=date.month, day=date.day, hour=hour)
+                    except IndexError:
+                        # And skip if no data:
+                        logger.exception("Skipping hour as no data")
+                        del st 
+                        gc.collect()
+                        continue
+                    
+                    # And loop over minutes (to save on memory issues):
+                    for minute in range(60):
+                        # Check whether specified window is greater than a minute in duration:
+                        if self.endtime - self.starttime > 60:
+                            # Check time within specified run window:
+                            if self.starttime >= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute) + 60:
+                                continue
+                            if self.endtime <= obspy.UTCDateTime(year=date.year, month=date.month, day=date.day, hour=hour, minute=minute):
+                                continue
+                        elif self.starttime.minute != minute:
+                            continue
+                            
+                        # Trim data:
+                        st_trimmed = st.copy()
+                        if self.win_len_s > self.win_step_inc_s:
+                            self.win_pad_s = self.win_len_s
+                        else:
+                            self.win_pad_s = 0.
+                        if self.endtime - self.starttime > 60:
+                            st_trimmed.trim(starttime=obspy.UTCDateTime(year=date.year,
+                                                                        month=date.month,
+                                                                        day=date.day,
+                                                                        hour=hour,
+                                                                        minute=minute),
+                                            endtime=obspy.UTCDateTime(year=date.year,
+                                                                      month=date.month,
+                                                                      day=date.day,
+                                                                      hour=hour,
+                                                                      minute=minute)+60+self.win_pad_s)
+                        else:
+                            st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
+                        time_this_minute_st = st_trimmed[0].stats.starttime
+                        # Run array processing:
+                        # (to get power in slowness space)
+                        Psum_all = self._beamforming(st_trimmed)
+                        del st_trimmed 
+                        gc.collect()
+
+                        # Calculate time-series outputs (for detection) from data:
+                        t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
+                        # And append to data out:
+                        t_series_out = []
+                        for t_serie in t_series:
+                            t_series_out.append( str(time_this_minute_st + t_serie) )
+
+                        data_store['t'].extend(t_series_out)
+                        data_store['power'].extend(powers)
+                        data_store['slowness'].extend(slownesses)
+                        data_store['back_azi'].extend(back_azis)
+
+                        # And clear memory:
+                        del Psum_all, t_series, powers, slownesses, back_azis
+                        gc.collect()
+
+                    # And save data out:
+                    out_fname = os.path.join(self.outdir, outfile)
+                    #make DataFrame "just-in-time" as it is more efficient this way
+                    store_df = pd.DataFrame(data_store)
+                    store_df.to_csv(out_fname, index=False)
+
+                    # And append fname to history:
+                    self.out_fnames_array_proc.append(out_fname)
+              
+        return None
 
     def _setup_array_receiver_coords(self):
         """Function to setup station receiver coords in correct format for 
@@ -561,7 +744,6 @@ class setup_detection:
                                                                                                             self.stations_df['y_array_coords_km']) 
 
 
-
     def find_min_max_array_sensitivity(self, vel_assumed=3.0):
         """Function to find array min and max sensitivities.
         Parameters
@@ -592,39 +774,63 @@ class setup_detection:
         print("="*60)
 
 
-    def _load_day_of_data(self, year, julday, hour=None):
-        """Function to load a day of data."""
+    def _load_data(self, year, month, day, hour=None, norm=True):
+        """
+        Function to load data. If no hour is specified the whole day will be read in.
+        Otherwise the hour of data will be loaded.
+
+        Parameters
+        ----------
+
+        year : int
+            year to load data for (yyyy)
+        month : int 
+            month to load data for. Leading 0's will be added.        
+        day : int 
+            day to load data for. Leading 0's will be added.
+        hour : int, Optional
+            hour to load data for. Leading 0's will be added.
+        
+        Returns:
+        ----------
+        data : obspy.Stream
+            Waveform data for requested date and time.
+        """
         # Load in data:
-        mseed_dir = os.path.join(self.archivedir, str(year), str(julday).zfill(3))
+        mseed_dir = Path(self.archivedir, str(year), str(month).zfill(2), str(day).zfill(2))
+        # print(mseed_dir)
         st = obspy.Stream()
         for index, row in self.stations_df.iterrows():
+            # [J Asplet - think about replacing station DataFrame with StatonXML object]
             station = row['Name']
             for channel in self.channels_to_use:
+                if hour is None:
+                    timestamp = f'{year:02d}{month:02d}{day:02d}T*'          
+                else:
+                    timestamp = f'{year:02d}{month:02d}{day:02d}T{hour:02d}0000'
                 try:
-                    if hour:
-                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_", str(hour).zfill(2), "*", station, "*", channel, "*"))))
-                    else:
-                        st_tmp = obspy.read(os.path.join(mseed_dir, ''.join((str(year), str(julday).zfill(3), "_*", station, "*", channel, "*"))))
+                    st_tmp = obspy.read(f'{mseed_dir}/{timestamp}_{station}_{channel}.mseed')
                     for tr in st_tmp:
                         st.append(tr)
                 except:
-                    print("No data for "+station+", channel = "+channel+". Skipping this data.")
+                    logger.exception(f"No data for {station}, channel = {channel}, timestamp {timestamp}. Skipping this data.")
                     continue
         # Merge data:
         st.detrend('demean')
+        st.detrend('linear')
         st.merge(method=1, fill_value=0.)
         # And apply filter:
         if self.freqmin:
             if self.freqmax:
                 st.filter('bandpass', freqmin=self.freqmin, freqmax=self.freqmax)
-        # And trim data, if some lies outside start and end times:
+        # And trim data, if some lies outside start and end time of beamforming period:
         if self.starttime > st[0].stats.starttime:
             st.trim(starttime=self.starttime)
         if self.endtime < st[0].stats.endtime:
             st.trim(endtime=self.endtime)
-        return st 
 
-    
+        return st
+
     def _convert_st_to_np_data(self, st):
         """Function to convert data to numpy format for processing."""
         self.n_win = int(((st[0].stats.endtime - self.win_pad_s) - st[0].stats.starttime) / self.win_step_inc_s) # (Note: endtime - self.win_pad_s as pass extra padding via trimmed st)
@@ -644,13 +850,12 @@ class setup_detection:
                     else:
                         # Zero pad data (as insufficient data passed for final window) and print warning:
                         data[i,j,:] = 0.
-                        print("Warning: Zero-padding as not enough data to fill window overlap ( for win_len_s =", self.win_len_s, "and win_step_inc_s =", self.win_step_inc_s, ")")
+                        logger.warning(f"Warning: Zero-padding as not enough data to fill window overlap ( for win_len_s = {self.win_len_s}, and win_step_inc_s = {self.win_step_inc_s})")
                 except IndexError:
                     # Deal with if a particular station has no data for given window:
                     data[i,j,:] = 0.
         return data 
 
-    
     def _stack_results(self, Pfreq_all):
         """Function to perform stacking of the results."""
         Psum_all = np.zeros((Pfreq_all.shape[0], Pfreq_all.shape[2], Pfreq_all.shape[3]), dtype=complex)
@@ -662,7 +867,6 @@ class setup_detection:
             else:
                 Psum_all[i,:,:] = np.sum(Pfreq_all[i,:,:,:],axis=0)
         return Psum_all
-
 
     def _find_time_series(self, Psum_all):
         """Function to calculate beamforming time-series outputs, given 
@@ -676,8 +880,6 @@ class setup_detection:
         # Calcualte ux, uy:
         ur = np.linspace(0, self.max_sl,Psum_all.shape[1])
         utheta = utheta = np.linspace(0,360-(360/Psum_all.shape[2]),Psum_all.shape[2])
-        dur=ur[1]-ur[0]
-        dutheta=utheta[1]-utheta[0]
         # Create time-series:
         n_win_curr = Psum_all.shape[0]
         t_series = np.arange(self.win_step_inc_s/2,(n_win_curr*self.win_step_inc_s) + (self.win_step_inc_s/2), self.win_step_inc_s)
@@ -716,13 +918,13 @@ class setup_detection:
         yy = self.stations_df['y_array_coords_km'].values
         # And run:
         if verbosity>1:
-            print("Performing run for",data.shape[0],"windows")
+            logger.info("Performing run for",data.shape[0],"windows")
             tic = time.time()
-        Pfreq_all = _fast_freq_domain_array_proc(data, self.max_sl, self.fs, target_freqs, xx, yy, 
-                                                        self.n_stations, self.n_t_samp, self.remove_autocorr)
+        Pfreq_all = _fast_freq_domain_array_proc(data, self.min_sl, self.max_sl, self.n_sl, self.min_baz, self.max_baz, self.n_baz,
+                                                 self.fs, target_freqs, xx, yy, self.n_stations, self.n_t_samp, self.remove_autocorr)
         if verbosity>1:
             toc = time.time()
-            print(toc-tic)
+            logger.info(f'runtime for _beamforming is {toc-tic}')
         # And tidy:
         del data 
         gc.collect()
@@ -737,117 +939,6 @@ class setup_detection:
 
         return Psum_all
 
-    
-    def run_array_proc(self):
-        """Function to run core array processing.
-        Performed in frequency domain. Involves applying phase (equiv. to time) shift 
-        for each frequency, over a range of specified slownesses.
-        Function inspured by work of D. Bowden (see Bowden et al. (2020))."""
-        # Prep. stations df:
-        #self._setup_array_receiver_coords()
-
-        # Loop over years:
-        for year in range(self.starttime.year, self.endtime.year+1):
-            # Loop over days:
-            for julday in range(1,367):
-                # Do some filtering for first and last years:
-                if year == self.starttime.year:
-                    if julday < self.starttime.julday:
-                        continue # Ignore day, as out of range
-                if year == self.endtime.year:
-                    if julday > self.endtime.julday:
-                        continue # Ignore day, as out of range
-                
-                # And process data:
-
-                # Loop over channels:
-                for self.channel_curr in self.channels_to_use:
-                    print("="*60)
-                    print("Processing data for year "+str(year)+", day "+str(julday).zfill(3)+", channel "+self.channel_curr)
-
-                    # And process for individual hours:
-                    # (to reduce memory usage)
-                    for hour in range(24):
-                        print("Processing for hour", str(hour).zfill(2))
-                        if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour) + 3600:
-                            continue
-                        if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour):
-                            continue
-
-                        # Create datastore:
-                        out_df = pd.DataFrame({'t': [], 'power': [], 'slowness': [], 'back_azi': []})
-
-                        # Load data:
-                        st = self._load_day_of_data(year, julday, hour=hour)
-                        # starttime_this_day = obspy.UTCDateTime(year=year, julday=julday)
-                        try:
-                            starttime_this_st = st[0].stats.starttime
-                        except IndexError:
-                            # And skip if no data:
-                            print("Skipping hour as no data")
-                            del st 
-                            gc.collect()
-                            continue
-                        
-                        # And loop over minutes (to save on memory issues):
-                        for minute in range(60):
-                            # Check whether specified window is greater than a minute in duration:
-                            if self.endtime - self.starttime > 60:
-                                # Check time within specified run window:
-                                if self.starttime > obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute) + 60:
-                                    continue
-                                if self.endtime < obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute):
-                                    continue
-                            elif self.starttime.minute != minute:
-                                continue
-                                
-                            # Trim data:
-                            st_trimmed = st.copy()
-                            if self.win_len_s > self.win_step_inc_s:
-                                self.win_pad_s = self.win_len_s
-                            else:
-                                self.win_pad_s = 0.
-                            if self.endtime - self.starttime > 60:
-                                st_trimmed.trim(starttime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute), 
-                                                endtime=obspy.UTCDateTime(year=year, julday=julday, hour=hour, minute=minute)+60+self.win_pad_s)
-                            else:
-                                st_trimmed.trim(starttime=self.starttime, endtime=self.endtime+self.win_pad_s)
-
-                            # Run array processing:
-                            # (to get power in slowness space)
-                            Psum_all = self._beamforming(st_trimmed)
-                            del st_trimmed 
-                            gc.collect()
-
-                            # Calculate time-series outputs (for detection) from data:
-                            t_series, powers, slownesses, back_azis = self._find_time_series(Psum_all)
-                            
-                            # And append to data out:
-                            t_series_out = []
-                            if self.endtime - self.starttime > 60:
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + (minute*60) + t_serie) )
-                            else:
-                                for t_serie in t_series:
-                                    t_series_out.append( str(starttime_this_st + t_serie) )
-                            tmp_df = pd.DataFrame({'t': t_series_out, 'power': powers, 'slowness': slownesses, 'back_azi': back_azis})
-                            out_df = out_df.append(tmp_df)
-                            out_df.reset_index(drop=True, inplace=True)
-
-                            # And save data out:
-                            out_fname = os.path.join(self.outdir, ''.join(("detection_t_series_", str(year).zfill(4), str(julday).zfill(3), "_", 
-                                                        str(starttime_this_st.hour).zfill(2), "00", "_ch", self.channel_curr[-1], ".csv")))
-                            out_df.to_csv(out_fname, index=False)
-
-                            # And append fname to history:
-                            self.out_fnames_array_proc.append(out_fname)
-
-                            # And clear memory:
-                            del Psum_all, t_series, powers, slownesses, back_azis
-                            gc.collect()
-                            
-        return None
-
     def _calculate_mad(self, x, scale=1.4826):
         """
         Calculates the Median Absolute Deviation (MAD) of the input array x.
@@ -858,6 +949,29 @@ class setup_detection:
         mad = np.median(np.abs(x - np.median(x)))
         return scale * mad
 
+    def plot_polar_slowness_space(self, beam_power, event_phase_arr_time, component, log=False):
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='polar')
+        rad = np.linspace(self.min_sl, self.max_sl, beam_power.shape[0])
+        azm = np.linspace(np.radians(self.min_baz), 
+                            np.radians(self.max_baz), beam_power.shape[1])
+        th, r = np.meshgrid(azm, rad)
+        ax.set_theta_offset(np.pi/2)
+        ax.set_theta_direction(-1)
+        if log:
+            im = ax.pcolormesh(th, r, np.log(beam_power), cmap='magma')
+        else:
+            im = ax.pcolormesh(th, r, beam_power, cmap='magma')
+
+        plt.colorbar(im)
+        plt.grid()
+        event_date_stamp = f'{event_phase_arr_time.year:04d}{event_phase_arr_time.month:02d}{event_phase_arr_time.day:02d}'
+        event_time_stamp = f'{event_phase_arr_time.hour:02d}{event_phase_arr_time.minute:02d}{event_phase_arr_time.second:02d}'
+        vesp_figpath = Path(self.outdir, 'plots', 'vespagrams')
+        vesp_figpath.mkdir(parents=True, exist_ok=True) # makes plots/vespagrams if it doesnt exist
+        fig.savefig(f'{vesp_figpath}/Detected_event_{event_date_stamp}_{event_time_stamp}_slow_spac_{component}.png', dpi=600)
+        plt.close()
     
     def _calc_uncertainties(self, events_df, t_series_df_Z, t_series_df_hor, verbosity=0):
         """Function to calculate uncertainties for phase-associated event detections.
@@ -879,12 +993,13 @@ class setup_detection:
         for index, row in events_df.iterrows():
             if count % 10 == 0:
                 if verbosity > 0:
-                    print("Calculating uncertainty for event", count+1, "/", len(events_df))
+                    logger.info("Calculating uncertainty for event", count+1, "/", len(events_df))
             # Load in data (if needed):
             # (done like this to avoid unnneccessary read ins, improving eff.)
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             if count == 0:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)
 
             # Find uncertainties:
             # ------- For vertical -------:
@@ -906,7 +1021,8 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t1'])
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)   
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)   
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -952,24 +1068,13 @@ class setup_detection:
                         Pxx_curr = 0 
                         idx_diff = Psum_opt.shape[1]            
             dbazi = 360 / Psum_opt.shape[1]
+
             bazi1_err = idx_diff * dbazi
             # ------- End vertical -------
 
             # Plot slowness space that used for uncertainty, if specified:
-            if verbosity > 1:
-                fig = plt.figure()
-                Axes3D(fig)
-                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
-                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
-                th, r = np.meshgrid(azm, rad)
-                ax = plt.subplot(projection="polar")
-                ax.set_theta_offset(np.pi/2)
-                ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
-                plt.colorbar(im)
-                plt.grid()
-                plt.show()
-
+            if verbosity >= 1:
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='vert')
             # ------- For horizontal -------:
             # And find FWHM for t2 pick:
             # (only use ascending currently (assume symetric pdf))
@@ -988,7 +1093,8 @@ class setup_detection:
             event_phase_arr_time = obspy.UTCDateTime(row['t2'])
             # Reload data if needed:
             if st[0].stats.starttime > event_phase_arr_time or st[0].stats.endtime < event_phase_arr_time:
-                st = self._load_day_of_data(event_phase_arr_time.year, event_phase_arr_time.julday, hour=event_phase_arr_time.hour)            
+                st = self._load_data(event_phase_arr_time.year, event_phase_arr_time.month,
+                                     event_phase_arr_time.day, hour=event_phase_arr_time.hour)            
             st_trimmed = st.copy()
             st_trimmed.trim(starttime=event_phase_arr_time-((n_wins_for_max_t_shift+0.5)*self.win_len_s), 
                                 endtime=event_phase_arr_time+((n_wins_for_max_t_shift+0.5)*self.win_len_s)) # (Note: 0.5 as windows centred)
@@ -1041,20 +1147,8 @@ class setup_detection:
             # ------- End horizontal -------
             
             # Plot slowness space that used for uncertainty, if specified:
-            if verbosity > 1:
-                fig = plt.figure()
-                Axes3D(fig)
-                rad = np.linspace(0, self.max_sl, Psum_opt.shape[0])
-                azm = np.linspace(0, 2 * np.pi, Psum_opt.shape[1])
-                th, r = np.meshgrid(azm, rad)
-                ax = plt.subplot(projection="polar")
-                ax.set_theta_offset(np.pi/2)
-                ax.set_theta_direction(-1)
-                im = ax.pcolormesh(th, r, Psum_opt, cmap='inferno')
-                plt.colorbar(im)
-                plt.grid()
-                plt.show()
-
+            if verbosity >= 1:
+                self.plot_polar_slowness_space(Psum_opt, event_phase_arr_time, component='horz')
             # And append data to overall uncertainties df:
             uncertainties_df_curr = pd.DataFrame({'t1_err': [t1_err], 't2_err': [t2_err], 'slow1_err': [slow1_err], 
                                                     'slow2_err': [slow2_err], 'bazi1_err': [bazi1_err], 'bazi2_err': [bazi2_err]})
@@ -1069,9 +1163,8 @@ class setup_detection:
         events_df = pd.concat([events_df, uncertainties_df], axis=1)
 
         return events_df
-    
-    
-    def detect_events(self, verbosity=0):
+
+    def detect_events(self, verbosity=0, fnames=None):
         """Function to detect events, based on the power time-series generated 
         by run_array_proc(). Note: Currently, only Median Absolute Deviation 
         triggering is implemented.
@@ -1080,12 +1173,14 @@ class setup_detection:
         - mad_multiplier
         - min_event_sep_s
         """
-        print("Note: <mad_window_length_s> not yet implemented.")
+        # print("Note: <mad_window_length_s> not yet implemented.")
         # Create datastore:
         events_df_all = pd.DataFrame()
         # Loop over array proc outdir data:
-        for fname in glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv")):
-            f_uid = fname[-20:-8]
+        if fnames is None:
+            fnames = glob.glob(os.path.join(self.outdir, "detection_t_series_*_chZ.csv"))
+        for fname in fnames:
+            f_uid = fname[-21:-8]
             # Check if in list to process:
             if fname in self.out_fnames_array_proc:
                 # And load in data:
@@ -1105,6 +1200,8 @@ class setup_detection:
                     fname_E = os.path.join(self.outdir, ''.join(( "detection_t_series_", f_uid, "_ch2.csv" )))
                     t_series_df_E = pd.read_csv(fname_E)
             else:
+                logger.warning(f'fname {fname} not in fname_array_proc list')
+                logger.warning(f'fname_array_proc first entry looks like this {self.out_fnames_array_proc[0]}')
                 continue # Skip file, as not previously been processed.
             # And check to see that t-series exists within file:
             if len(t_series_df_Z) == 0:
@@ -1116,9 +1213,9 @@ class setup_detection:
 
             # Check if all inputs are same length, and if not, skip file:
             if not len(t_series_df_Z) == len(t_series_df_N) == len(t_series_df_E):
-                print("Warning: Files with f uid", f_uid, 
+                logger.warning("Warning: Files with f uid", f_uid, 
                       "are not of equal length. Therefore using shortest length (will miss some data).")
-                print("( Lengths are", len(t_series_df_Z) , len(t_series_df_N) , len(t_series_df_E), ")")
+                logger.warning("( Lengths are", len(t_series_df_Z) , len(t_series_df_N) , len(t_series_df_E), ")")
                 min_len = np.min(np.array([len(t_series_df_Z), len(t_series_df_N), len(t_series_df_E)]))
                 t_series_df_Z = t_series_df_Z.iloc[:min_len]
                 t_series_df_N = t_series_df_N.iloc[:min_len]
@@ -1137,7 +1234,7 @@ class setup_detection:
             t_series_df_hor["back_azi"] = np.average(np.vstack((t_series_df_N['back_azi'], t_series_df_E['back_azi'])), 
                                                         axis=0, weights=np.vstack((N_weighting, 
                                                         E_weighting))) # Weighted mean (weighted by power)
-            print("(Weighted horizontal slowness and back-azi using power)")
+            # print("(Weighted horizontal slowness and back-azi using power)")
             del N_weighting, E_weighting, t_series_df_N, t_series_df_E
             gc.collect()
 
@@ -1152,22 +1249,23 @@ class setup_detection:
 
             # Phase assoicate by BAZI threshold and max. power:
             events_df = _phase_associator(t_series_df_Z, t_series_df_hor, peaks_Z, peaks_hor, 
-                                                self.bazi_tol, self.filt_phase_assoc_by_max_power, self.max_phase_sep_s, self.min_event_sep_s, verbosity=verbosity)
+                                                self.bazi_tol, self.filt_phase_assoc_by_max_power,
+                                                self.max_phase_sep_s, self.min_event_sep_s, verbosity=verbosity)
 
             # Find uncertainties (in time, bazi, slowness):
             if self.calc_uncertainties:
                 events_df = self._calc_uncertainties(events_df, t_series_df_Z, t_series_df_hor, verbosity=verbosity)
 
             # Append to datastore:
-            events_df_all = events_df_all.append(events_df)
+            events_df_all = pd.concat([events_df_all, events_df])
 
             # Plot detected, phase-associated picks:
             if verbosity > 1:
-                print("="*40)
-                print("Event phase associations:")            
-                print(events_df)
-                print("="*40)
-                fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(6,4))
+                # print("="*40)
+                logger.info("Event phase associations:")            
+                # print(events_df)
+                # print("="*40)
+                fig, ax = plt.subplots(nrows=3, sharex=True, figsize=(9,6))
                 # Plot power:
                 ax[0].plot(t_series_df_Z['t'], t_series_df_Z['power'], label="Vertical power")
                 ax[0].plot(t_series_df_hor['t'], t_series_df_hor['power'], label="Horizontal power")
@@ -1181,7 +1279,7 @@ class setup_detection:
                     ax[0].scatter(events_df_all['t1'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='r', label="P phase picks")
                     ax[0].scatter(events_df_all['t2'], np.ones(len(events_df_all))*np.max(t_series_df_Z['power']), c='b', label="S phase picks")
                 else:
-                    print("No events to plot.")
+                    logger.info("No events to plot.")
                 ax[0].legend()
                 ax[2].set_xlabel("Time")
                 ax[0].set_ylabel("Power (arb. units)")
@@ -1190,7 +1288,11 @@ class setup_detection:
                 # plt.gca().yaxis.set_major_locator(MaxNLocator(5)) 
                 for i in range(3):
                     ax[i].xaxis.set_major_locator(plt.MaxNLocator(3))
+                figpath = Path(self.outdir, 'plots', 'detection_t_series')
+                figpath.mkdir(parents=True, exist_ok=True)    
+                fig.savefig(f'{figpath}/Phase_association_{f_uid}.png', dpi=600)
                 plt.show()
+
         
         return events_df_all
     
@@ -1329,8 +1431,8 @@ class setup_detection:
         f.close()
         print("Loaded detection instance from:", preload_fname)
 
-    
-    def get_composite_array_st_from_bazi_slowness(self, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10, st_out_fname='out.m', return_streams=False):
+
+    def get_composite_array_st_from_bazi_slowness(self, arrival_time, bazis_1_2, slows_1_2, t_before_s=10, t_after_s=10, st_out_fname='out.m', return_streams=False, method='linear', degree=1):
         """Function to find array stacked stream from back-azimuth and slowness. Returns average amplitude 
         time-series seismogram of stacked array data, for all three componets.
         Parameters
@@ -1360,7 +1462,8 @@ class setup_detection:
             If True, returns st and composite_st. Optional. Default = False.  
         """
         # Load in raw mseed data:
-        st = self._load_day_of_data(arrival_time.year, arrival_time.julday, hour=arrival_time.hour)
+        st = self._load_data(arrival_time.year, arrival_time.month,
+                             arrival_time.day, hour=arrival_time.hour, norm=False)
         # And trim data:
         st.trim(starttime=arrival_time-t_before_s, endtime=arrival_time+t_after_s)
 
@@ -1394,10 +1497,8 @@ class setup_detection:
         n_stat = len(st.select(channel="??Z"))
         # Get unique channels:
         chan_labels_tmp = []
-        chan_labels_unique = []
         for tr in st:
             chan_labels_tmp.append(tr.stats.channel)
-        chan_labels_unique = list(set(chan_labels_tmp))
         # Create datastores to save to:
         max_st_len = 0
         for i in range(len(st)):
@@ -1437,10 +1538,17 @@ class setup_detection:
                     E_all[:,i] = st.select(channel="??2")[i].data
                 else:
                     E_all[:len(st.select(channel="??2")[i].data),i] = st.select(channel="??2")[i].data       
-
+            except:
+                print('Date gap, continue... for now')
+                continue
         # And create stacked data stream:
-        composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
-
+        if method == 'linear':
+            composite_st = _create_stacked_data_st(st, Z_all, N_all, E_all)
+        elif method == 'pws':
+            composite_st = _create_phase_weighted_stack_st(st, Z_all, N_all, E_all, degree)
+        elif method == 'nth_root':
+            pass
+            # composite_st = _create_nth_root_stack_st(st, Z_all, N_all, E_all, degree)
         # And decimate data back down to original sampling rate:
         st.decimate(10, no_filter=True)
         composite_st.decimate(10, no_filter=True)

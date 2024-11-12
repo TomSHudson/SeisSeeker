@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import skfmm # For fast-marching travel-time lookup tables
 # import ttcrpy.rgrid as ttcrpy_rgrid # For ray-tracing based incidence angles
 import gc 
-import pykonal # For ray-tracing based incidence angles
+#import pykonal # For ray-tracing based incidence angles
 
 #----------------------------------------------- Define constants and parameters -----------------------------------------------
 

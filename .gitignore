@@ -130,3 +130,6 @@ dmypy.json
 
 # And bespoke ignores:
 ./**/*.old
+
+# Mac OS specific
+*.DS_store
